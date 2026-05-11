@@ -1,0 +1,104 @@
+name: ag_merchandising
+description: AG Merchandising - App de controle de merchandising
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # UI & Design
+  auto_size_text: ^3.0.0
+  flutter_animate: ^4.5.0
+  font_awesome_flutter: ^10.7.0
+  google_fonts: ^7.0.2
+  page_transition: ^2.1.0
+  from_css_color: ^2.0.0
+  fl_chart: ^1.1.1
+  timeago: ^3.7.0
+
+  # Navegação & Estado
+  go_router: ^17.0.1
+  provider: ^6.1.0
+  flutter_riverpod: ^2.6.1
+  riverpod_annotation: ^2.6.1
+
+  # Armazenamento Local
+  shared_preferences: ^2.5.0
+  sqflite: ^2.3.0
+  path_provider: ^2.1.0
+  flutter_secure_storage: ^10.0.0
+
+  # Câmera & Imagens
+  camera: ^0.11.0
+  image: ^4.0.0
+  image_picker: ^1.1.0
+  mobile_scanner: ^7.1.4
+
+  # Localização
+  geolocator: ^14.0.2
+  geocoding: ^4.0.0
+
+  # Permissões
+  permission_handler: ^12.0.1
+
+  # PDF & Exportação
+  pdf: ^3.11.0
+  share_plus: ^11.1.0
+  csv: ^6.0.0
+  file_picker: ^10.3.8
+  syncfusion_flutter_xlsio: ^32.1.23
+
+  # Rede & APIs
+  http: ^1.2.0
+  http_parser: ^4.1.2
+  googleapis: ^15.0.0
+  googleapis_auth: ^2.0.0
+
+  # Notificações & Background
+  flutter_local_notifications: ^19.5.0
+  workmanager: ^0.9.0
+
+  # Autenticação
+  local_auth: ^3.0.0
+
+  # Utilitários
+  intl: ^0.20.0
+  path: ^1.8.0
+  collection: ^1.19.0
+  json_path: ^0.9.0
+  url_launcher: ^6.3.0
+  logger: ^2.5.0
+  connectivity_plus: ^6.1.0
+
+  # Cache (se necessário)
+  cached_network_image: ^3.4.0
+  flutter_cache_manager: ^3.4.0
+
+dev_dependencies:
+  flutter_lints: ^6.0.0
+  lints: ^6.0.0
+  flutter_test:
+    sdk: flutter
+  flutter_launcher_icons: ^0.14.4
+  riverpod_generator: ^2.6.2
+  build_runner: ^2.4.13
+  custom_lint: ^0.7.6
+  riverpod_lint: ^2.6.2
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/images/
+    - assets/videos/
+    - assets/audios/
+    - assets/rive_animations/
+    - assets/pdfs/
+    - assets/jsons/
+
+flutter_launcher_icons:
+  android: "ic_launcher"
+  ios: true
+  remove_alpha_ios: true
+  image_path: "assets/images/icon.png"

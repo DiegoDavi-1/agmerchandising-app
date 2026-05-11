@@ -4,8 +4,13 @@
 *.log
 *.pyc
 *.swp
+*.apk
+*.aab
 .buildlog/
 .history
+.idea/
+*.iml
+logs/
 
 
 
