@@ -58,7 +58,7 @@ dependencies:
 
   # Notificações & Background
   flutter_local_notifications: ^19.5.0
-  workmanager: ^0.9.0
+  workmanager: ^0.7.0
 
   # Autenticação
   local_auth: ^3.0.0
