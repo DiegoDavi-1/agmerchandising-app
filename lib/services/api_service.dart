@@ -124,7 +124,7 @@ class ApiService {
   }
 
   /// Verificar se está autenticado
-  static bool isAuthenticated() => _token != null || _refreshToken != null;
+  static bool isAuthenticated() => _token != null;
 
   // ===== MARCAS (BRANDS) =====
   /// Listar marcas com cache e paginação
@@ -200,6 +200,35 @@ class ApiService {
         if (data['success']) return data['data'];
       }
       throw Exception('Erro ao buscar marca');
+    } catch (e) {
+      throw Exception('Erro de conexão: $e');
+    }
+  }
+
+  /// Buscar lojas de uma marca disponível para o usuário autenticado
+  static Future<List<Map<String, dynamic>>> getBrandStores(int brandId) async {
+    try {
+      final response = await _requestWithRetry(
+        () => http.get(
+          Uri.parse('$baseUrl/brands/$brandId/stores'),
+          headers: _getHeaders(),
+        ),
+      );
+
+      if (response.statusCode == 401) {
+        await _checkTokenExpired(401);
+        return getBrandStores(brandId);
+      }
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        if (data['success'] == true) {
+          final stores = data['data'] ?? data['stores'] ?? [];
+          return List<Map<String, dynamic>>.from(stores);
+        }
+      }
+
+      throw Exception('Erro ao buscar lojas da marca: ${response.statusCode}');
     } catch (e) {
       throw Exception('Erro de conexão: $e');
     }
@@ -571,6 +600,7 @@ class ApiService {
     required int brandId,
     required Map<String, dynamic> collectedData,
     String? brandName,
+    int? storeId,
     double? latitude,
     double? longitude,
     String? locationAddress,
@@ -578,6 +608,7 @@ class ApiService {
     final body = {
       'brand_id': brandId,
       'brandName': brandName,
+      if (storeId != null) 'store_id': storeId,
       'data': collectedData,
       'latitude': latitude,
       'longitude': longitude,
@@ -609,6 +640,8 @@ class ApiService {
         return saveCollection(
           brandId: brandId,
           collectedData: collectedData,
+          brandName: brandName,
+          storeId: storeId,
           latitude: latitude,
           longitude: longitude,
           locationAddress: locationAddress,

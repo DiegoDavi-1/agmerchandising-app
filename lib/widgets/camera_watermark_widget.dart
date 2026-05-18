@@ -14,7 +14,7 @@ class CameraWatermarkWidget extends StatefulWidget {
   final Color textColor;
   final double fontSize;
   final bool showIcon;
-  
+
   const CameraWatermarkWidget({
     super.key,
     this.alignment = Alignment.bottomLeft,
@@ -41,14 +41,14 @@ class _CameraWatermarkWidgetState extends State<CameraWatermarkWidget> {
     super.initState();
     _updateDateTime();
     _updateLocation();
-    
+
     // Atualizar data/hora a cada segundo
     _dateTimeTimer = Timer.periodic(const Duration(seconds: 1), (_) {
       if (mounted) _updateDateTime();
     });
-    
-    // Atualizar localização a cada 5 segundos
-    _locationTimer = Timer.periodic(const Duration(seconds: 5), (_) {
+
+    // Atualizar localização a cada 60 segundos
+    _locationTimer = Timer.periodic(const Duration(seconds: 60), (_) {
       if (mounted) _updateLocation();
     });
   }
@@ -62,7 +62,8 @@ class _CameraWatermarkWidgetState extends State<CameraWatermarkWidget> {
 
   void _updateDateTime() {
     setState(() {
-      _currentDateTime = DateFormat('dd/MM/yyyy - HH:mm:ss').format(DateTime.now());
+      _currentDateTime =
+          DateFormat('dd/MM/yyyy - HH:mm:ss').format(DateTime.now());
     });
   }
 
@@ -72,20 +73,23 @@ class _CameraWatermarkWidgetState extends State<CameraWatermarkWidget> {
         desiredAccuracy: LocationAccuracy.high,
         timeLimit: const Duration(seconds: 3),
       ).timeout(const Duration(seconds: 4));
-      
+
       // Tentar obter endereço
       try {
         final placemarks = await placemarkFromCoordinates(
           position.latitude,
           position.longitude,
         ).timeout(const Duration(seconds: 2));
-        
+
         if (placemarks.isNotEmpty && mounted) {
           final place = placemarks.first;
           List<String> parts = [];
-          
+
           if (place.street?.isNotEmpty == true) {
             parts.add(place.street!);
+          }
+          if (place.subThoroughfare?.isNotEmpty == true) {
+            parts.add(place.subThoroughfare!);
           }
           if (place.subLocality?.isNotEmpty == true) {
             parts.add(place.subLocality!);
@@ -97,10 +101,13 @@ class _CameraWatermarkWidgetState extends State<CameraWatermarkWidget> {
             }
             parts.add(city);
           }
-          
+          if (place.postalCode?.isNotEmpty == true) {
+            parts.add(place.postalCode!);
+          }
+
           setState(() {
-            _currentLocation = parts.isNotEmpty 
-                ? parts.join(', ') 
+            _currentLocation = parts.isNotEmpty
+                ? parts.join(', ')
                 : 'Lat: ${position.latitude.toStringAsFixed(5)}, Long: ${position.longitude.toStringAsFixed(5)}';
             _isLoadingLocation = false;
           });
@@ -123,7 +130,8 @@ class _CameraWatermarkWidgetState extends State<CameraWatermarkWidget> {
   void _setCoordinatesAsLocation(Position position) {
     if (mounted) {
       setState(() {
-        _currentLocation = 'Lat: ${position.latitude.toStringAsFixed(5)}, Long: ${position.longitude.toStringAsFixed(5)}';
+        _currentLocation =
+            'Lat: ${position.latitude.toStringAsFixed(5)}, Long: ${position.longitude.toStringAsFixed(5)}';
         _isLoadingLocation = false;
       });
     }
@@ -211,6 +219,7 @@ class _CameraWatermarkWidgetState extends State<CameraWatermarkWidget> {
                       color: widget.textColor.withValues(alpha: 0.95),
                       fontSize: widget.fontSize - 1,
                       fontWeight: FontWeight.w500,
+                      height: 1.3,
                       shadows: [
                         Shadow(
                           color: Colors.black.withValues(alpha: 0.8),
@@ -219,7 +228,7 @@ class _CameraWatermarkWidgetState extends State<CameraWatermarkWidget> {
                         ),
                       ],
                     ),
-                    maxLines: 2,
+                    maxLines: 3,
                     overflow: TextOverflow.ellipsis,
                   ),
                 ),

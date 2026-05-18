@@ -14,6 +14,7 @@ class DynamicBrandCollectionPage extends StatefulWidget {
   final String brandName;
   final String? brandHeaderColor;
   final int? storeId;
+  final String? storeName;
 
   const DynamicBrandCollectionPage({
     super.key,
@@ -21,6 +22,7 @@ class DynamicBrandCollectionPage extends StatefulWidget {
     required this.brandName,
     this.brandHeaderColor,
     this.storeId,
+    this.storeName,
   });
 
   @override
@@ -215,6 +217,7 @@ class _DynamicBrandCollectionPageState extends State<DynamicBrandCollectionPage>
         brandId: widget.brandId,
         collectedData: _collectedData,
         brandName: widget.brandName,
+        storeId: widget.storeId,
         latitude: _currentPosition?.latitude,
         longitude: _currentPosition?.longitude,
         locationAddress: _resolvedAddress ??
@@ -546,6 +549,25 @@ class _DynamicBrandCollectionPageState extends State<DynamicBrandCollectionPage>
                                             fontSize: 13,
                                           ),
                                         ),
+                                        if ((widget.storeName ?? '').isNotEmpty)
+                                          Padding(
+                                            padding: const EdgeInsets.only(top: 6),
+                                            child: Container(
+                                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                                              decoration: BoxDecoration(
+                                                color: (isDark ? Colors.white : Colors.black).withOpacity(0.18),
+                                                borderRadius: BorderRadius.circular(999),
+                                              ),
+                                              child: Text(
+                                                'Loja: ${widget.storeName}',
+                                                style: TextStyle(
+                                                  color: isDark ? Colors.white : Colors.black,
+                                                  fontSize: 12,
+                                                  fontWeight: FontWeight.w600,
+                                                ),
+                                              ),
+                                            ),
+                                          ),
                                       ],
                                     ),
                                   ),

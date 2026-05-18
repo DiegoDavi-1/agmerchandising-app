@@ -11,7 +11,7 @@ import 'api_service.dart';
 
 class CollectionPdfService {
   /// Gera PDF da coleta e retorna o arquivo salvo em documentos do app.
-  /// O arquivo fica disponivel offline no dispositivo.
+  /// O arquivo fica disponível offline no dispositivo.
   static Future<File> generateCollectionPdf({
     required String brandName,
     required List<BrandField> fields,
@@ -21,32 +21,12 @@ class CollectionPdfService {
     String? address,
     double? accuracy,
   }) async {
-    final pdf = pw.Document(
-      theme: pw.ThemeData.withFont(
-        base: pw.Font.helvetica(),
-        bold: pw.Font.helveticaBold(),
-        italic: pw.Font.helveticaOblique(),
-        boldItalic: pw.Font.helveticaBoldOblique(),
-      ),
-    );
-    final addressInfo =
-        _extractAddressInfo(address: address, collectedData: collectedData);
+    final pdf = pw.Document();
+    final addressInfo = _extractAddressInfo(address: address, collectedData: collectedData);
     final allPhotoEntries = _extractPhotoEntries(fields, collectedData);
     final photoEntries = allPhotoEntries.take(12).toList();
     final hiddenPhotoCount = allPhotoEntries.length - photoEntries.length;
     final photoImages = <_PhotoEntry, pw.MemoryImage>{};
-    final fieldDisplays = fields
-        .map(
-          (field) => _FieldDisplay(
-            label: _sanitizePdfText(field.fieldLabel),
-            value:
-                _formatValue(field.fieldType, collectedData[field.fieldName]),
-            fieldType: field.fieldType,
-          ),
-        )
-        .toList();
-    final completedFieldCount =
-        fieldDisplays.where((field) => field.hasValue).length;
 
     for (final entry in photoEntries) {
       final bytes = await _loadPhotoBytes(entry.url);
@@ -63,64 +43,146 @@ class CollectionPdfService {
         '${now.day.toString().padLeft(2, '0')}/${now.month.toString().padLeft(2, '0')}/${now.year}';
     final timeStr =
         '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}';
-    final infoItems = <_InfoItem>[
-      _InfoItem('Data da coleta', dateStr),
-      _InfoItem('Horario', timeStr),
-      if (addressInfo['street'] != null)
-        _InfoItem('Rua', addressInfo['street']!),
-      if (addressInfo['number'] != null)
-        _InfoItem('Numero', addressInfo['number']!),
-      if (addressInfo['district'] != null)
-        _InfoItem('Bairro', addressInfo['district']!),
-      if (addressInfo['cityUf'] != null)
-        _InfoItem('Cidade / UF', addressInfo['cityUf']!),
-      if (addressInfo['postalCode'] != null)
-        _InfoItem('CEP', addressInfo['postalCode']!),
-      if (addressInfo['complement'] != null)
-        _InfoItem('Complemento', addressInfo['complement']!),
-      if (addressInfo['street'] == null && addressInfo['full'] != null)
-        _InfoItem('Endereco', addressInfo['full']!),
-      if (latitude != null && longitude != null)
-        _InfoItem(
-          'Coordenadas',
-          '${latitude.toStringAsFixed(6)}, ${longitude.toStringAsFixed(6)}',
-        ),
-      if (accuracy != null)
-        _InfoItem('Precisao do GPS', '+/- ${accuracy.toStringAsFixed(0)} m'),
-    ];
 
     pdf.addPage(
       pw.MultiPage(
         pageFormat: PdfPageFormat.a4,
         margin: const pw.EdgeInsets.all(32),
         build: (context) => [
-          _buildHeroHeader(
-            brandName: brandName,
-            dateStr: dateStr,
-            timeStr: timeStr,
-            fieldCount: fieldDisplays.length,
-            completedFieldCount: completedFieldCount,
-            photoCount: photoEntries.length,
+          // ── Cabeçalho ──────────────────────────────────────
+          pw.Container(
+            padding: const pw.EdgeInsets.all(16),
+            decoration: pw.BoxDecoration(
+              color: PdfColor.fromHex('1E88E5'),
+              borderRadius: pw.BorderRadius.circular(8),
+            ),
+            child: pw.Column(
+              crossAxisAlignment: pw.CrossAxisAlignment.start,
+              children: [
+                pw.Text(
+                  'Relatório de Coleta',
+                  style: pw.TextStyle(
+                    color: PdfColors.white,
+                    fontSize: 20,
+                    fontWeight: pw.FontWeight.bold,
+                  ),
+                ),
+                pw.SizedBox(height: 4),
+                pw.Text(
+                  brandName,
+                  style: pw.TextStyle(
+                    color: PdfColors.white,
+                    fontSize: 14,
+                  ),
+                ),
+              ],
+            ),
           ),
-          pw.SizedBox(height: 18),
-          _buildCollectionInfoSection(infoItems),
-          pw.SizedBox(height: 18),
-          ..._buildCollectedDataSection(fieldDisplays),
+          pw.SizedBox(height: 16),
+
+          // ── Informações da Coleta ───────────────────────────
+          pw.Container(
+            padding: const pw.EdgeInsets.all(14),
+            decoration: pw.BoxDecoration(
+              color: PdfColor.fromHex('F7FAFC'),
+              borderRadius: pw.BorderRadius.circular(10),
+              border: pw.Border.all(color: PdfColor.fromHex('D7E3F2')),
+            ),
+            child: pw.Column(
+              crossAxisAlignment: pw.CrossAxisAlignment.start,
+              children: [
+                pw.Text(
+                  'Informacoes da Coleta',
+                  style: pw.TextStyle(
+                    fontSize: 12,
+                    fontWeight: pw.FontWeight.bold,
+                    color: PdfColor.fromHex('1F3B57'),
+                  ),
+                ),
+                pw.SizedBox(height: 8),
+                _infoRow('Data', dateStr),
+                _infoRow('Hora', timeStr),
+                if (addressInfo['street'] != null)
+                  _infoRow('Rua', addressInfo['street']!),
+                if (addressInfo['number'] != null)
+                  _infoRow('Numero', addressInfo['number']!),
+                if (addressInfo['district'] != null)
+                  _infoRow('Bairro', addressInfo['district']!),
+                if (addressInfo['cityUf'] != null)
+                  _infoRow('Cidade/UF', addressInfo['cityUf']!),
+                if (addressInfo['postalCode'] != null)
+                  _infoRow('CEP', addressInfo['postalCode']!),
+                if (addressInfo['complement'] != null)
+                  _infoRow('Complemento', addressInfo['complement']!),
+                if (addressInfo['street'] == null && addressInfo['full'] != null)
+                  _infoRow('Endereco', addressInfo['full']!),
+                if (latitude != null && longitude != null)
+                  _infoRow(
+                    'Coordenadas',
+                    '${latitude.toStringAsFixed(6)}, ${longitude.toStringAsFixed(6)}',
+                  ),
+                if (accuracy != null)
+                  _infoRow('Precisão GPS', '±${accuracy.toStringAsFixed(0)} m'),
+              ],
+            ),
+          ),
+          pw.SizedBox(height: 20),
+
+          // ── Título seção campos ─────────────────────────────
+          pw.Text(
+            'Dados Coletados',
+            style: pw.TextStyle(
+              fontSize: 14,
+              fontWeight: pw.FontWeight.bold,
+              color: PdfColor.fromHex('424242'),
+            ),
+          ),
+          pw.SizedBox(height: 8),
+
+          // ── Tabela de campos ────────────────────────────────
+          pw.Table(
+            border: pw.TableBorder.all(color: PdfColor.fromHex('E0E0E0'), width: 0.5),
+            columnWidths: {
+              0: const pw.FlexColumnWidth(2),
+              1: const pw.FlexColumnWidth(3),
+            },
+            children: [
+              // Cabeçalho da tabela
+              pw.TableRow(
+                decoration: pw.BoxDecoration(color: PdfColor.fromHex('1E88E5')),
+                children: [
+                  _tableCell('Campo', isHeader: true),
+                  _tableCell('Valor', isHeader: true),
+                ],
+              ),
+              // Linhas de dados
+              ...fields.map((field) {
+                final rawValue = collectedData[field.fieldName];
+                final displayValue = _formatValue(field.fieldType, rawValue);
+                return pw.TableRow(
+                  children: [
+                    _tableCell(field.fieldLabel),
+                    _tableCell(displayValue),
+                  ],
+                );
+              }),
+            ],
+          ),
+
           if (photoEntries.isNotEmpty) ...[
             pw.SizedBox(height: 20),
             pw.Container(
-              padding:
-                  const pw.EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              padding: const pw.EdgeInsets.symmetric(horizontal: 10, vertical: 8),
               decoration: pw.BoxDecoration(
-                color: PdfColor.fromHex('EAF3FF'),
-                borderRadius: pw.BorderRadius.circular(10),
-                border: pw.Border.all(color: PdfColor.fromHex('B8D6FF')),
+                color: PdfColor.fromHex('E8F2FF'),
+                borderRadius: pw.BorderRadius.circular(6),
+                border: pw.Border.all(color: PdfColor.fromHex('BBD8FF')),
               ),
               child: pw.Row(
                 mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
                 children: [
                   pw.Text(
-                    'Evidencias fotograficas',
+                    'Evidencias Fotograficas',
                     style: pw.TextStyle(
                       fontSize: 13,
                       fontWeight: pw.FontWeight.bold,
@@ -129,8 +191,7 @@ class CollectionPdfService {
                   ),
                   pw.Text(
                     '${photoImages.length} foto(s) no PDF',
-                    style: pw.TextStyle(
-                        fontSize: 9, color: PdfColor.fromHex('455A64')),
+                    style: pw.TextStyle(fontSize: 9, color: PdfColor.fromHex('455A64')),
                   ),
                 ],
               ),
@@ -142,14 +203,12 @@ class CollectionPdfService {
               children: photoEntries.map((entry) {
                 final image = photoImages[entry];
                 final locationLine = address != null && address.isNotEmpty
-                    ? 'Local: ${_sanitizePdfText(address, fallback: '')}'
+                    ? '📍 $address'
                     : (latitude != null && longitude != null)
-                        ? 'Local: ${latitude.toStringAsFixed(6)}, ${longitude.toStringAsFixed(6)}'
+                        ? '📍 ${latitude.toStringAsFixed(6)}, ${longitude.toStringAsFixed(6)}'
                         : null;
-                final accuracyLabel = accuracy != null
-                    ? ' | Precisao: +/- ${accuracy.toStringAsFixed(0)} m'
-                    : '';
-                final stampLine = 'Data/Hora: $dateStr $timeStr$accuracyLabel';
+                final accuracyLabel = accuracy != null ? '  ±${accuracy.toStringAsFixed(0)} m' : '';
+                final stampLine = '📅 $dateStr  🕐 $timeStr$accuracyLabel';
 
                 return pw.Container(
                   width: 245,
@@ -162,8 +221,9 @@ class CollectionPdfService {
                   child: pw.Column(
                     crossAxisAlignment: pw.CrossAxisAlignment.start,
                     children: [
+                      // Título do campo
                       pw.Text(
-                        _sanitizePdfText(entry.label),
+                        entry.label,
                         style: pw.TextStyle(
                           fontSize: 9,
                           fontWeight: pw.FontWeight.bold,
@@ -172,6 +232,7 @@ class CollectionPdfService {
                         maxLines: 2,
                       ),
                       pw.SizedBox(height: 6),
+                      // Imagem
                       if (image != null)
                         pw.Image(
                           image,
@@ -190,16 +251,15 @@ class CollectionPdfService {
                           ),
                           child: pw.Text(
                             'Nao foi possivel carregar a foto',
-                            style: pw.TextStyle(
-                                fontSize: 9, color: PdfColor.fromHex('607D8B')),
+                            style: pw.TextStyle(fontSize: 9, color: PdfColor.fromHex('607D8B')),
                             textAlign: pw.TextAlign.center,
                           ),
                         ),
                       pw.SizedBox(height: 5),
+                      // Faixa de data, hora e localização
                       pw.Container(
                         width: double.infinity,
-                        padding: const pw.EdgeInsets.symmetric(
-                            horizontal: 6, vertical: 4),
+                        padding: const pw.EdgeInsets.symmetric(horizontal: 6, vertical: 4),
                         decoration: pw.BoxDecoration(
                           color: PdfColor.fromHex('1E2A38'),
                           borderRadius: pw.BorderRadius.circular(3),
@@ -208,7 +268,7 @@ class CollectionPdfService {
                           crossAxisAlignment: pw.CrossAxisAlignment.start,
                           children: [
                             pw.Text(
-                              _sanitizePdfText(stampLine),
+                              stampLine,
                               style: pw.TextStyle(
                                 fontSize: 7.5,
                                 color: PdfColors.white,
@@ -217,7 +277,7 @@ class CollectionPdfService {
                             if (locationLine != null) ...[
                               pw.SizedBox(height: 2),
                               pw.Text(
-                                _sanitizePdfText(locationLine),
+                                locationLine,
                                 style: pw.TextStyle(
                                   fontSize: 7,
                                   color: PdfColor.fromHex('90CAF9'),
@@ -237,16 +297,18 @@ class CollectionPdfService {
                 padding: const pw.EdgeInsets.only(top: 8),
                 child: pw.Text(
                   '+$hiddenPhotoCount foto(s) nao incluida(s) para manter o PDF leve.',
-                  style: pw.TextStyle(
-                      fontSize: 9, color: PdfColor.fromHex('78909C')),
+                  style: pw.TextStyle(fontSize: 9, color: PdfColor.fromHex('78909C')),
                 ),
               ),
           ],
+
           pw.SizedBox(height: 24),
+
+          // ── Rodapé ─────────────────────────────────────────
           pw.Divider(color: PdfColor.fromHex('BDBDBD')),
           pw.SizedBox(height: 8),
           pw.Text(
-            'AG Merchandising | Gerado em $dateStr as $timeStr',
+            'AG Merchandising · Gerado em $dateStr às $timeStr',
             style: pw.TextStyle(
               fontSize: 9,
               color: PdfColor.fromHex('9E9E9E'),
@@ -256,10 +318,9 @@ class CollectionPdfService {
       ),
     );
 
-    // Salva em documentos do app (persistente, acessivel offline)
+    // Salva em documentos do app (persistente, acessível offline)
     final dir = await getApplicationDocumentsDirectory();
-    final safeBrand =
-        brandName.replaceAll(RegExp(r'[^\w\s]'), '').replaceAll(' ', '_');
+    final safeBrand = brandName.replaceAll(RegExp(r'[^\w\s]'), '').replaceAll(' ', '_');
     final timestamp =
         '${now.year}${now.month.toString().padLeft(2, '0')}${now.day.toString().padLeft(2, '0')}_${now.hour.toString().padLeft(2, '0')}${now.minute.toString().padLeft(2, '0')}';
     final file = File('${dir.path}/coleta_${safeBrand}_$timestamp.pdf');
@@ -275,9 +336,7 @@ class CollectionPdfService {
 
   static String _toAbsolutePhotoUrl(String raw) {
     final value = raw.trim();
-    if (value.startsWith('http://') || value.startsWith('https://')) {
-      return value;
-    }
+    if (value.startsWith('http://') || value.startsWith('https://')) return value;
     if (value.startsWith('/')) return '${_apiOrigin()}$value';
     if (value.startsWith('uploads/')) return '${_apiOrigin()}/$value';
     return value;
@@ -302,9 +361,11 @@ class CollectionPdfService {
           return response.bodyBytes;
         }
 
-        // Tenta sem token como fallback (foto publica)
+        // Tenta sem token como fallback (foto pública)
         if (headers.isNotEmpty) {
-          final pub = await http.get(uri).timeout(const Duration(seconds: 30));
+          final pub = await http
+              .get(uri)
+              .timeout(const Duration(seconds: 30));
           if (pub.statusCode == 200 && pub.bodyBytes.isNotEmpty) {
             return pub.bodyBytes;
           }
@@ -327,20 +388,18 @@ class CollectionPdfService {
     try {
       final decoded = img.decodeImage(bytes);
       if (decoded == null) {
-        // Se nao conseguir decodificar, tenta usar bytes originais.
+        // Se não conseguir decodificar, tenta usar bytes originais.
         return bytes;
       }
 
-      // Limita resolucao para reduzir risco de incompatibilidade/render branco.
+      // Limita resolução para reduzir risco de incompatibilidade/render branco.
       const maxSide = 2200;
       img.Image processed = decoded;
       if (decoded.width > maxSide || decoded.height > maxSide) {
         if (decoded.width >= decoded.height) {
-          processed = img.copyResize(decoded,
-              width: maxSide, interpolation: img.Interpolation.average);
+          processed = img.copyResize(decoded, width: maxSide, interpolation: img.Interpolation.average);
         } else {
-          processed = img.copyResize(decoded,
-              height: maxSide, interpolation: img.Interpolation.average);
+          processed = img.copyResize(decoded, height: maxSide, interpolation: img.Interpolation.average);
         }
       }
 
@@ -412,9 +471,14 @@ class CollectionPdfService {
       'administrative_area',
       'endereco_uf',
     ]);
-    final postalCode =
-        pick(['postal_code', 'cep', 'zip', 'zipcode', 'endereco_cep']) ??
-            postalFromAddress;
+    final postalCode = pick([
+          'postal_code',
+          'cep',
+          'zip',
+          'zipcode',
+          'endereco_cep'
+        ]) ??
+        postalFromAddress;
     final complement = pick([
       'complement',
       'complemento',
@@ -477,7 +541,7 @@ class CollectionPdfService {
     }
 
     // Fallback final: varredura recursiva em todo o payload da coleta
-    // para capturar fotos mesmo que o campo nao esteja marcado como 'photo'.
+    // para capturar fotos mesmo que o campo não esteja marcado como 'photo'.
     final genericUrls = _extractUrlsFromValue(collectedData);
     for (var i = 0; i < genericUrls.length; i++) {
       push('Foto ${i + 1}', genericUrls[i]);
@@ -493,7 +557,8 @@ class CollectionPdfService {
       final v = value.trim();
       if (v.isEmpty) return const [];
       final lower = v.toLowerCase();
-      final looksLikeImage = lower.contains('/uploads/') ||
+      final looksLikeImage =
+          lower.contains('/uploads/') ||
           lower.endsWith('.jpg') ||
           lower.endsWith('.jpeg') ||
           lower.endsWith('.png') ||
@@ -512,23 +577,14 @@ class CollectionPdfService {
 
     if (value is Map) {
       final out = <String>[];
-      final candidate = value['photo_url'] ??
-          value['photoUrl'] ??
-          value['url'] ??
-          value['path'] ??
-          value['image'] ??
-          value['image_url'];
+      final candidate = value['photo_url'] ?? value['photoUrl'] ?? value['url'] ?? value['path'] ?? value['image'] ?? value['image_url'];
       if (candidate != null) {
         out.addAll(_extractUrlsFromValue(candidate));
       }
 
+      // Percorre demais chaves (aninhamento livre)
       for (final entry in value.entries) {
-        if (entry.key == 'photo_url' ||
-            entry.key == 'photoUrl' ||
-            entry.key == 'url' ||
-            entry.key == 'path' ||
-            entry.key == 'image' ||
-            entry.key == 'image_url') {
+        if (entry.key == 'photo_url' || entry.key == 'photoUrl' || entry.key == 'url' || entry.key == 'path' || entry.key == 'image' || entry.key == 'image_url') {
           continue;
         }
         out.addAll(_extractUrlsFromValue(entry.value));
@@ -562,12 +618,12 @@ class CollectionPdfService {
     await SharePlus.instance.share(
       ShareParams(
         files: [XFile(file.path)],
-        text: 'Coleta AG Merchandising - $brandName',
+        text: 'Coleta AG Merchandising – $brandName',
       ),
     );
   }
 
-  /// Gera PDF e faz upload automatico para o servidor.
+  /// Gera PDF e faz upload automático para o servidor.
   /// Retorna true se o upload foi bem-sucedido.
   static Future<bool> generateAndUpload({
     required int collectionId,
@@ -620,430 +676,56 @@ class CollectionPdfService {
     );
   }
 
-  // Helpers internos
+  // ── Helpers internos ──────────────────────────────────────
 
   static String _formatValue(String fieldType, dynamic value) {
-    if (value == null) return 'Nao informado';
+    if (value == null) return '—';
     switch (fieldType) {
       case 'checkbox':
-        return (value == true || value == 1) ? 'Sim' : 'Nao';
+        return (value == true || value == 1) ? 'Sim' : 'Não';
       case 'photo':
         if (value is List) return '${value.length} foto(s)';
-        return value.toString().isNotEmpty ? '1 foto' : 'Nao informado';
+        return value.toString().isNotEmpty ? '1 foto' : '—';
       case 'date':
         try {
           final dt = DateTime.parse(value.toString());
-          return _sanitizePdfText(
-            '${dt.day.toString().padLeft(2, '0')}/${dt.month.toString().padLeft(2, '0')}/${dt.year}',
-          );
+          return '${dt.day.toString().padLeft(2, '0')}/${dt.month.toString().padLeft(2, '0')}/${dt.year}';
         } catch (_) {
-          return _sanitizePdfText(value.toString());
+          return value.toString();
         }
       default:
-        final str = value is List
-            ? value.map((item) => _sanitizePdfText(item.toString())).join(', ')
-            : _sanitizePdfText(value.toString());
-        return str.isEmpty ? 'Nao informado' : str;
+        final str = value.toString();
+        return str.isEmpty ? '—' : str;
     }
   }
 
-  static pw.Widget _buildHeroHeader({
-    required String brandName,
-    required String dateStr,
-    required String timeStr,
-    required int fieldCount,
-    required int completedFieldCount,
-    required int photoCount,
-  }) {
-    return pw.Container(
-      padding: const pw.EdgeInsets.all(20),
-      decoration: pw.BoxDecoration(
-        color: PdfColor.fromHex('1565C0'),
-        borderRadius: pw.BorderRadius.circular(16),
-      ),
-      child: pw.Column(
-        crossAxisAlignment: pw.CrossAxisAlignment.start,
+  static pw.Widget _infoRow(String label, String value) {
+    return pw.Padding(
+      padding: const pw.EdgeInsets.symmetric(vertical: 2),
+      child: pw.Row(
         children: [
-          pw.Row(
-            crossAxisAlignment: pw.CrossAxisAlignment.start,
-            children: [
-              pw.Expanded(
-                child: pw.Column(
-                  crossAxisAlignment: pw.CrossAxisAlignment.start,
-                  children: [
-                    pw.Container(
-                      padding: const pw.EdgeInsets.symmetric(
-                          horizontal: 10, vertical: 5),
-                      decoration: pw.BoxDecoration(
-                        color: PdfColor.fromHex('42A5F5'),
-                        borderRadius: pw.BorderRadius.circular(999),
-                      ),
-                      child: pw.Text(
-                        'RELATORIO DE COLETA',
-                        style: pw.TextStyle(
-                          color: PdfColors.white,
-                          fontSize: 9,
-                          fontWeight: pw.FontWeight.bold,
-                          letterSpacing: 1.1,
-                        ),
-                      ),
-                    ),
-                    pw.SizedBox(height: 12),
-                    pw.Text(
-                      _sanitizePdfText(brandName),
-                      style: pw.TextStyle(
-                        color: PdfColors.white,
-                        fontSize: 24,
-                        fontWeight: pw.FontWeight.bold,
-                      ),
-                    ),
-                    pw.SizedBox(height: 6),
-                    pw.Text(
-                      'Resumo visual da coleta com campos preenchidos e evidencias anexadas.',
-                      style: pw.TextStyle(
-                        color: PdfColor.fromHex('D9ECFF'),
-                        fontSize: 10.5,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              pw.SizedBox(width: 16),
-              pw.Container(
-                width: 148,
-                padding: const pw.EdgeInsets.all(14),
-                decoration: pw.BoxDecoration(
-                  color: PdfColor.fromHex('0E4E95'),
-                  borderRadius: pw.BorderRadius.circular(14),
-                ),
-                child: pw.Column(
-                  crossAxisAlignment: pw.CrossAxisAlignment.start,
-                  children: [
-                    pw.Text(
-                      'Gerado em',
-                      style: pw.TextStyle(
-                        color: PdfColor.fromHex('B7DCFF'),
-                        fontSize: 8.5,
-                      ),
-                    ),
-                    pw.SizedBox(height: 4),
-                    pw.Text(
-                      dateStr,
-                      style: pw.TextStyle(
-                        color: PdfColors.white,
-                        fontSize: 14,
-                        fontWeight: pw.FontWeight.bold,
-                      ),
-                    ),
-                    pw.Text(
-                      timeStr,
-                      style: pw.TextStyle(
-                        color: PdfColor.fromHex('D9ECFF'),
-                        fontSize: 11,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
+          pw.Text(
+            '$label: ',
+            style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 10),
           ),
-          pw.SizedBox(height: 16),
-          pw.Row(
-            children: [
-              pw.Expanded(
-                child:
-                    _buildMetricCard('Campos', '$fieldCount', 'configurados'),
-              ),
-              pw.SizedBox(width: 10),
-              pw.Expanded(
-                child: _buildMetricCard(
-                    'Preenchidos', '$completedFieldCount', 'com valor'),
-              ),
-              pw.SizedBox(width: 10),
-              pw.Expanded(
-                child: _buildMetricCard('Fotos', '$photoCount', 'anexadas'),
-              ),
-            ],
-          ),
+          pw.Text(value, style: const pw.TextStyle(fontSize: 10)),
         ],
       ),
     );
   }
 
-  static pw.Widget _buildMetricCard(
-      String label, String value, String subtitle) {
-    return pw.Container(
-      padding: const pw.EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-      decoration: pw.BoxDecoration(
-        color: PdfColor.fromHex('D5E9FF'),
-        borderRadius: pw.BorderRadius.circular(12),
-      ),
-      child: pw.Column(
-        crossAxisAlignment: pw.CrossAxisAlignment.start,
-        children: [
-          pw.Text(
-            label,
-            style: pw.TextStyle(
-              color: PdfColor.fromHex('0E4E95'),
-              fontSize: 8.5,
-            ),
-          ),
-          pw.SizedBox(height: 5),
-          pw.Text(
-            value,
-            style: pw.TextStyle(
-              color: PdfColor.fromHex('0C2D57'),
-              fontSize: 18,
-              fontWeight: pw.FontWeight.bold,
-            ),
-          ),
-          pw.Text(
-            subtitle,
-            style: pw.TextStyle(
-              color: PdfColor.fromHex('305A87'),
-              fontSize: 8,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  static pw.Widget _buildCollectionInfoSection(List<_InfoItem> items) {
-    return pw.Container(
-      padding: const pw.EdgeInsets.all(16),
-      decoration: pw.BoxDecoration(
-        color: PdfColor.fromHex('F8FBFF'),
-        borderRadius: pw.BorderRadius.circular(14),
-        border: pw.Border.all(color: PdfColor.fromHex('D9E7F7')),
-      ),
-      child: pw.Column(
-        crossAxisAlignment: pw.CrossAxisAlignment.start,
-        children: [
-          pw.Text(
-            'Informacoes da coleta',
-            style: pw.TextStyle(
-              fontSize: 13,
-              fontWeight: pw.FontWeight.bold,
-              color: PdfColor.fromHex('123B69'),
-            ),
-          ),
-          pw.SizedBox(height: 10),
-          pw.Wrap(
-            spacing: 10,
-            runSpacing: 10,
-            children: items
-                .map(
-                  (item) => pw.Container(
-                    width: 235,
-                    padding: const pw.EdgeInsets.all(10),
-                    decoration: pw.BoxDecoration(
-                      color: PdfColors.white,
-                      borderRadius: pw.BorderRadius.circular(10),
-                      border: pw.Border.all(color: PdfColor.fromHex('E1ECF8')),
-                    ),
-                    child: pw.Column(
-                      crossAxisAlignment: pw.CrossAxisAlignment.start,
-                      children: [
-                        pw.Text(
-                          _sanitizePdfText(item.label),
-                          style: pw.TextStyle(
-                            fontSize: 8.5,
-                            fontWeight: pw.FontWeight.bold,
-                            color: PdfColor.fromHex('5E7A96'),
-                          ),
-                        ),
-                        pw.SizedBox(height: 4),
-                        pw.Text(
-                          _sanitizePdfText(item.value),
-                          style: pw.TextStyle(
-                            fontSize: 11,
-                            color: PdfColor.fromHex('223548'),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                )
-                .toList(),
-          ),
-        ],
-      ),
-    );
-  }
-
-  static List<pw.Widget> _buildCollectedDataSection(
-      List<_FieldDisplay> fields) {
-    final widgets = <pw.Widget>[
-      pw.Container(
-        padding: const pw.EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-        decoration: pw.BoxDecoration(
-          color: PdfColor.fromHex('EEF5FC'),
-          borderRadius: pw.BorderRadius.circular(12),
-          border: pw.Border.all(color: PdfColor.fromHex('D2E4F5')),
-        ),
-        child: pw.Row(
-          mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
-          children: [
-            pw.Text(
-              'Dados coletados',
-              style: pw.TextStyle(
-                fontSize: 13,
-                fontWeight: pw.FontWeight.bold,
-                color: PdfColor.fromHex('24476B'),
-              ),
-            ),
-            pw.Text(
-              '${fields.length} campo(s)',
-              style: pw.TextStyle(
-                fontSize: 9,
-                color: PdfColor.fromHex('5C738C'),
-              ),
-            ),
-          ],
-        ),
-      ),
-      pw.SizedBox(height: 10),
-    ];
-
-    for (var i = 0; i < fields.length; i++) {
-      final field = fields[i];
-      widgets.add(_buildCollectedFieldCard(field, isAlternate: i.isOdd));
-      if (i != fields.length - 1) {
-        widgets.add(pw.SizedBox(height: 10));
-      }
-    }
-
-    return widgets;
-  }
-
-  static pw.Widget _buildCollectedFieldCard(_FieldDisplay field,
-      {required bool isAlternate}) {
-    final accent = _fieldTypeColor(field.fieldType);
-    return pw.Container(
-      padding: const pw.EdgeInsets.all(14),
-      decoration: pw.BoxDecoration(
-        color: isAlternate ? PdfColor.fromHex('FCFDFE') : PdfColors.white,
-        borderRadius: pw.BorderRadius.circular(12),
-        border: pw.Border.all(color: PdfColor.fromHex('E1E8EF')),
-      ),
-      child: pw.Column(
-        crossAxisAlignment: pw.CrossAxisAlignment.start,
-        children: [
-          pw.Row(
-            crossAxisAlignment: pw.CrossAxisAlignment.start,
-            children: [
-              pw.Expanded(
-                child: pw.Text(
-                  field.label,
-                  style: pw.TextStyle(
-                    fontSize: 11,
-                    fontWeight: pw.FontWeight.bold,
-                    color: PdfColor.fromHex('243342'),
-                  ),
-                ),
-              ),
-              pw.SizedBox(width: 8),
-              _buildFieldTypeChip(_fieldTypeLabel(field.fieldType), accent),
-            ],
-          ),
-          pw.SizedBox(height: 8),
-          pw.Container(
-            width: double.infinity,
-            padding: const pw.EdgeInsets.all(10),
-            decoration: pw.BoxDecoration(
-              color: PdfColor.fromHex('F7FAFD'),
-              borderRadius: pw.BorderRadius.circular(10),
-              border: pw.Border.all(color: PdfColor.fromHex('E6EEF6')),
-            ),
-            child: pw.Text(
-              field.value,
-              style: pw.TextStyle(
-                fontSize: 10.5,
-                color: field.hasValue
-                    ? PdfColor.fromHex('273746')
-                    : PdfColor.fromHex('7B8B9A'),
-                fontStyle: field.hasValue ? null : pw.FontStyle.italic,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  static pw.Widget _buildFieldTypeChip(String label, PdfColor color) {
-    return pw.Container(
-      padding: const pw.EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      decoration: pw.BoxDecoration(
-        color: color,
-        borderRadius: pw.BorderRadius.circular(999),
-      ),
+  static pw.Widget _tableCell(String text, {bool isHeader = false}) {
+    return pw.Padding(
+      padding: const pw.EdgeInsets.symmetric(horizontal: 8, vertical: 6),
       child: pw.Text(
-        label,
+        text,
         style: pw.TextStyle(
-          color: PdfColors.white,
-          fontSize: 8,
-          fontWeight: pw.FontWeight.bold,
+          fontSize: 10,
+          fontWeight: isHeader ? pw.FontWeight.bold : null,
+          color: isHeader ? PdfColors.white : PdfColor.fromHex('212121'),
         ),
       ),
     );
-  }
-
-  static PdfColor _fieldTypeColor(String fieldType) {
-    switch (fieldType) {
-      case 'checkbox':
-        return PdfColor.fromHex('43A047');
-      case 'photo':
-        return PdfColor.fromHex('1E88E5');
-      case 'date':
-        return PdfColor.fromHex('8E24AA');
-      case 'number':
-        return PdfColor.fromHex('EF6C00');
-      case 'textarea':
-        return PdfColor.fromHex('546E7A');
-      default:
-        return PdfColor.fromHex('455A64');
-    }
-  }
-
-  static String _fieldTypeLabel(String fieldType) {
-    switch (fieldType) {
-      case 'checkbox':
-        return 'Sim/Nao';
-      case 'photo':
-        return 'Foto';
-      case 'date':
-        return 'Data';
-      case 'number':
-        return 'Numero';
-      case 'textarea':
-        return 'Texto longo';
-      default:
-        return 'Texto';
-    }
-  }
-
-  static String _sanitizePdfText(String? input,
-      {String fallback = 'Nao informado'}) {
-    if (input == null) return fallback;
-
-    final text = input
-        .replaceAll('\r\n', '\n')
-        .replaceAll('📍', 'Local: ')
-        .replaceAll('📅', 'Data: ')
-        .replaceAll('🕐', 'Hora: ')
-        .replaceAll('•', '-')
-        .replaceAll('·', '|')
-        .replaceAll('–', '-')
-        .replaceAll('—', '-')
-        .replaceAll('“', '"')
-        .replaceAll('”', '"')
-        .replaceAll('’', "'")
-        .trim();
-
-    if (text.isEmpty) return fallback;
-    return text;
   }
 }
 
@@ -1052,25 +734,4 @@ class _PhotoEntry {
   final String url;
 
   const _PhotoEntry(this.label, this.url);
-}
-
-class _InfoItem {
-  final String label;
-  final String value;
-
-  const _InfoItem(this.label, this.value);
-}
-
-class _FieldDisplay {
-  final String label;
-  final String value;
-  final String fieldType;
-
-  const _FieldDisplay({
-    required this.label,
-    required this.value,
-    required this.fieldType,
-  });
-
-  bool get hasValue => value != 'Nao informado';
 }

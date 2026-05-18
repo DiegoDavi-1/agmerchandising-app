@@ -2,7 +2,7 @@
 class BrandField {
   final int id;
   final int brandId;
-  final String fieldType; // checkbox, photo, text, number, date, textarea
+  final String fieldType; // checkbox, photo, photo_text, text, number, date, textarea
   final String fieldLabel;
   final String fieldName;
   final BrandFieldConfig? fieldConfig;
@@ -48,6 +48,7 @@ class BrandField {
 // Configurações específicas de cada campo
 class BrandFieldConfig {
   final bool? required;
+  final bool? requiredText;
   final bool? allowMultiple;
   final int? maxPhotos;
   final int? min;
@@ -55,6 +56,7 @@ class BrandFieldConfig {
 
   BrandFieldConfig({
     this.required,
+    this.requiredText,
     this.allowMultiple,
     this.maxPhotos,
     this.min,
@@ -64,6 +66,7 @@ class BrandFieldConfig {
   factory BrandFieldConfig.fromJson(Map<String, dynamic> json) {
     return BrandFieldConfig(
       required: json['required'] as bool?,
+      requiredText: json['required_text'] as bool?,
       allowMultiple: json['allow_multiple'] as bool?,
       maxPhotos: json['max_photos'] as int?,
       min: json['min'] as int?,
@@ -74,6 +77,7 @@ class BrandFieldConfig {
   Map<String, dynamic> toJson() {
     return {
       'required': required,
+      'required_text': requiredText,
       'allow_multiple': allowMultiple,
       'max_photos': maxPhotos,
       'min': min,

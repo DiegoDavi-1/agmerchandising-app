@@ -30,6 +30,7 @@ class _BrandsServerPageState extends State<BrandsServerPage> {
   int _todayNumber = 0;
   bool _showOnlyToday = true;
   bool _showCompleted = true; // seção concluídas expansível
+  Map<int, List<dynamic>> _brandStoresCache = {}; // Cache de lojas por marca
 
   @override
   void initState() {
@@ -101,6 +102,9 @@ class _BrandsServerPageState extends State<BrandsServerPage> {
           _applyFilter();
         });
       }
+      
+      // Carregar lojas para cada marca
+      _loadBrandStores();
     } catch (e) {
       appLogger.error('Erro ao carregar marcas', error: e);
       if (mounted) {
@@ -115,6 +119,24 @@ class _BrandsServerPageState extends State<BrandsServerPage> {
           _isLoadingMore = false;
         });
       }
+    }
+  }
+
+  Future<void> _loadBrandStores() async {
+    try {
+      for (final brand in _brands) {
+        final brandId = brand['id'] as int?;
+        if (brandId != null && !_brandStoresCache.containsKey(brandId)) {
+          final stores = await ApiService.getBrandStores(brandId);
+          if (mounted) {
+            setState(() {
+              _brandStoresCache[brandId] = stores;
+            });
+          }
+        }
+      }
+    } catch (e) {
+      appLogger.error('Erro ao carregar lojas das marcas', error: e);
     }
   }
 
@@ -169,6 +191,143 @@ class _BrandsServerPageState extends State<BrandsServerPage> {
         ],
       ),
     );
+  }
+
+  String _formatStoreName(Map<String, dynamic> store) {
+    final storeNumber = (store['store_number'] ?? '').toString().trim();
+    final storeName = (store['store_name'] ?? store['name'] ?? '').toString().trim();
+    if (storeNumber.isNotEmpty && storeName.isNotEmpty) return '$storeNumber - $storeName';
+    if (storeName.isNotEmpty) return storeName;
+    if (storeNumber.isNotEmpty) return storeNumber;
+    return 'Loja';
+  }
+
+  Future<Map<String, dynamic>?> _selectStoreForBrand(dynamic brand) async {
+    final brandId = brand['id'] as int;
+    final stores = await ApiService.getBrandStores(brandId);
+
+    if (!mounted) return null;
+    if (stores.isEmpty) return null;
+
+    return showModalBottomSheet<Map<String, dynamic>>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Theme.of(context).brightness == Brightness.dark
+          ? const Color(0xFF1A1F2E)
+          : Colors.white,
+      builder: (context) {
+        final isDark = Theme.of(context).brightness == Brightness.dark;
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Selecione a loja',
+                  style: GoogleFonts.poppins(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w700,
+                    color: isDark ? Colors.white : Colors.black87,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  brand['name']?.toString() ?? 'Marca',
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: isDark ? Colors.white70 : Colors.black54,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Flexible(
+                  child: ListView.separated(
+                    shrinkWrap: true,
+                    itemCount: stores.length,
+                    separatorBuilder: (_, __) => const SizedBox(height: 8),
+                    itemBuilder: (context, index) {
+                      final store = stores[index];
+                      return Material(
+                        color: isDark ? const Color(0xFF0F1419) : const Color(0xFFF7F9FC),
+                        borderRadius: BorderRadius.circular(14),
+                        child: ListTile(
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                          leading: const Icon(Icons.storefront_outlined),
+                          title: Text(
+                            _formatStoreName(store),
+                            style: const TextStyle(fontWeight: FontWeight.w600),
+                          ),
+                          trailing: const Icon(Icons.chevron_right),
+                          onTap: () => Navigator.of(context).pop(store),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _openBrandCollection(dynamic brand) async {
+    try {
+      Map<String, dynamic>? selectedStore;
+      final assignedStoreId = brand['assigned_store_id'] as int?;
+
+      if (assignedStoreId != null) {
+        selectedStore = {
+          'id': assignedStoreId,
+          'store_number': brand['assigned_store_number'],
+          'store_name': brand['assigned_store_name'],
+          'name': brand['assigned_store_name'],
+        };
+      } else {
+        selectedStore = await _selectStoreForBrand(brand);
+        if (!mounted) return;
+        if (selectedStore == null) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Selecione uma loja para continuar.')),
+          );
+          return;
+        }
+      }
+
+      final store = selectedStore!;
+
+      final result = await Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => DynamicBrandCollectionPage(
+            brandId: brand['id'] as int,
+            brandName: brand['name'] ?? 'Marca',
+            brandHeaderColor: brand['header_color'] as String?,
+            storeId: store['id'] as int?,
+            storeName: _formatStoreName(store),
+          ),
+        ),
+      );
+
+      if (result == true && mounted) {
+        await _loadBrands(reset: true, forceRefresh: true);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('✅ Coleta registrada!'),
+              backgroundColor: Colors.green,
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Erro ao carregar lojas: $e')),
+      );
+    }
   }
 
   Widget _buildBrandList(bool isDark) {
@@ -278,7 +437,8 @@ class _BrandsServerPageState extends State<BrandsServerPage> {
         ],
       ),
       child: ListTile(
-        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        minLeadingWidth: 56,
         leading: Stack(
           clipBehavior: Clip.none,
           children: [
@@ -354,8 +514,49 @@ class _BrandsServerPageState extends State<BrandsServerPage> {
               ),
           ],
         ),
-        subtitle: Text(
-          brand['description'] ?? 'Sem descrição',
+        subtitle: _buildBrandSubtitle(brand, isCompleted, isDark),
+        trailing: Icon(
+          isCompleted ? Icons.task_alt : Icons.chevron_right,
+          color: isCompleted ? Colors.green : (isDark ? Colors.grey[600] : Colors.grey[400]),
+        ),
+        onTap: () => _openBrandCollection(brand),
+      ),
+    );
+  }
+
+  Widget _buildBrandSubtitle(dynamic brand, bool isCompleted, bool isDark) {
+    final brandId = brand['id'] as int?;
+    final stores = _brandStoresCache[brandId] ?? [];
+    final description = brand['description'] ?? 'Sem descrição';
+
+    if (stores.isEmpty) {
+      return Text(
+        description,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: TextStyle(
+          color: isCompleted
+              ? Colors.green.withOpacity(0.7)
+              : (isDark ? Colors.grey[500] : Colors.grey[600]),
+          fontSize: 12,
+        ),
+      );
+    }
+
+    // Mostrar primeira loja com número
+    final firstStore = stores.first;
+    final storeNumber = (firstStore['store_number'] ?? '').toString().trim();
+    final storeName = (firstStore['store_name'] ?? firstStore['name'] ?? '').toString().trim();
+    final storeDisplay = storeNumber.isNotEmpty ? '$storeNumber - $storeName' : storeName;
+    
+    final moreCount = stores.length > 1 ? ' +${stores.length - 1}' : '';
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          description,
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
           style: TextStyle(
@@ -365,36 +566,27 @@ class _BrandsServerPageState extends State<BrandsServerPage> {
             fontSize: 12,
           ),
         ),
-        trailing: Icon(
-          isCompleted ? Icons.task_alt : Icons.chevron_right,
-          color: isCompleted ? Colors.green : (isDark ? Colors.grey[600] : Colors.grey[400]),
-        ),
-        onTap: () async {
-          final result = await Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (context) => DynamicBrandCollectionPage(
-                brandId: brand['id'] as int,
-                brandName: brand['name'] ?? 'Marca',
-                brandHeaderColor: brand['header_color'] as String?,
-                storeId: brand['assigned_store_id'] as int?,
-              ),
+        const SizedBox(height: 4),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+          decoration: BoxDecoration(
+            color: isCompleted
+                ? Colors.green.withOpacity(0.1)
+                : (isDark ? const Color(0xFF2A3F5F) : const Color(0xFFE3F2FD)),
+            borderRadius: BorderRadius.circular(6),
+          ),
+          child: Text(
+            '🏪 $storeDisplay$moreCount',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: isCompleted ? Colors.green : (isDark ? Colors.blue[300] : Colors.blue[700]),
+              fontSize: 11,
+              fontWeight: FontWeight.w500,
             ),
-          );
-
-          if (result == true && mounted) {
-            await _loadBrands(reset: true, forceRefresh: true);
-            if (mounted) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('✅ Coleta registrada!'),
-                  backgroundColor: Colors.green,
-                ),
-              );
-            }
-          }
-        },
-      ),
+          ),
+        ),
+      ],
     );
   }
 

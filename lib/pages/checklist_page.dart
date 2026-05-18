@@ -74,7 +74,14 @@ class _ChecklistPageState extends State<ChecklistPage> {
 
   Future<void> _addPhoto(int index) async {
     final ImagePicker picker = ImagePicker();
-    final XFile? photo = await picker.pickImage(source: ImageSource.camera);
+    final XFile? photo = await picker.pickImage(
+      source: ImageSource.camera,
+      preferredCameraDevice: CameraDevice.rear,
+      maxWidth: 960,
+      maxHeight: 720,
+      imageQuality: 60,
+      requestFullMetadata: false,
+    );
     
     if (photo != null && _activeChecklist != null) {
       setState(() {
@@ -327,6 +334,9 @@ class _ChecklistPageState extends State<ChecklistPage> {
                                 height: 200,
                                 width: double.infinity,
                                 fit: BoxFit.cover,
+                                cacheWidth: 960,
+                                cacheHeight: 720,
+                                filterQuality: FilterQuality.low,
                               ),
                             ),
                             const SizedBox(height: 8),
