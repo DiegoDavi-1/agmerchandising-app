@@ -22,7 +22,7 @@ workflows:
       - name: Build signed IPA
         script: |
           NEXT_BUILD_NUMBER=$((27 + BUILD_NUMBER))
-          flutter build ipa --release --build-number="$NEXT_BUILD_NUMBER"
+          flutter build ipa --release --build-number="$NEXT_BUILD_NUMBER" --export-options-plist="$HOME/export_options.plist"
     artifacts:
       - build/ios/ipa/*.ipa
     publishing:
