@@ -86,7 +86,7 @@ class ErrorHandler {
               ),
             ],
           ),
-          backgroundColor: const Color(0xFF22C55E),
+          backgroundColor: const Color(0xFF10B981),
           duration: duration,
           behavior: SnackBarBehavior.floating,
           shape: RoundedRectangleBorder(
@@ -118,7 +118,7 @@ class ErrorHandler {
               ),
             ],
           ),
-          backgroundColor: const Color(0xFFFF9800),
+          backgroundColor: const Color(0xFFF59E0B),
           duration: duration,
           behavior: SnackBarBehavior.floating,
           shape: RoundedRectangleBorder(
@@ -169,13 +169,13 @@ class ErrorHandler {
                 },
                 child: Text(
                   'Tentar Novamente',
-                  style: GoogleFonts.poppins(color: const Color(0xFF9C3FE4)),
+                  style: GoogleFonts.poppins(color: const Color(0xFF0F766E)),
                 ),
               ),
             ElevatedButton(
               onPressed: () => Navigator.pop(context),
               style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF9C3FE4),
+                backgroundColor: const Color(0xFF0F766E),
               ),
               child: Text(
                 'OK',

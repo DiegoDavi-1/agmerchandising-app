@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../core/photo_standard.dart';
 import '../models/checklist_model.dart';
 import '../services/checklist_service.dart';
 import 'package:image_picker/image_picker.dart';
@@ -74,7 +75,12 @@ class _ChecklistPageState extends State<ChecklistPage> {
 
   Future<void> _addPhoto(int index) async {
     final ImagePicker picker = ImagePicker();
-    final XFile? photo = await picker.pickImage(source: ImageSource.camera);
+    final XFile? photo = await picker.pickImage(
+      source: ImageSource.camera,
+      maxWidth: PhotoStandard.fieldMaxSide,
+      maxHeight: PhotoStandard.fieldMaxSide,
+      imageQuality: PhotoStandard.fieldQuality,
+    );
     
     if (photo != null && _activeChecklist != null) {
       setState(() {

@@ -32,15 +32,15 @@ class CollectionPdfService {
     final addressInfo =
         _extractAddressInfo(address: address, collectedData: collectedData);
     final allPhotoEntries = _extractPhotoEntries(fields, collectedData);
-    final photoEntries = allPhotoEntries.take(12).toList();
-    final hiddenPhotoCount = allPhotoEntries.length - photoEntries.length;
+    final photoEntries = allPhotoEntries;
     final photoImages = <_PhotoEntry, pw.MemoryImage>{};
     final fieldDisplays = fields
+        .where((field) =>
+            field.fieldType != 'photo_text' && field.fieldType != 'photo')
         .map(
           (field) => _FieldDisplay(
             label: _sanitizePdfText(field.fieldLabel),
-            value:
-                _formatValue(field.fieldType, collectedData[field.fieldName]),
+            value: _formatFieldValue(field, collectedData[field.fieldName]),
             fieldType: field.fieldType,
           ),
         )
@@ -66,20 +66,14 @@ class CollectionPdfService {
     final infoItems = <_InfoItem>[
       _InfoItem('Data da coleta', dateStr),
       _InfoItem('Horario', timeStr),
-      if (addressInfo['street'] != null)
-        _InfoItem('Rua', addressInfo['street']!),
-      if (addressInfo['number'] != null)
-        _InfoItem('Numero', addressInfo['number']!),
-      if (addressInfo['district'] != null)
-        _InfoItem('Bairro', addressInfo['district']!),
-      if (addressInfo['cityUf'] != null)
-        _InfoItem('Cidade / UF', addressInfo['cityUf']!),
-      if (addressInfo['postalCode'] != null)
-        _InfoItem('CEP', addressInfo['postalCode']!),
+      _InfoItem('Endereco', _formatAddressCompact(addressInfo)),
+      _InfoItem('Rua', _addrOrDefault(addressInfo['street'])),
+      _InfoItem('Numero', _addrOrDefault(addressInfo['number'])),
+      _InfoItem('Bairro', _addrOrDefault(addressInfo['district'])),
+      _InfoItem('Cidade / UF', _addrOrDefault(addressInfo['cityUf'])),
+      _InfoItem('CEP', _addrOrDefault(addressInfo['postalCode'])),
       if (addressInfo['complement'] != null)
         _InfoItem('Complemento', addressInfo['complement']!),
-      if (addressInfo['street'] == null && addressInfo['full'] != null)
-        _InfoItem('Endereco', addressInfo['full']!),
       if (latitude != null && longitude != null)
         _InfoItem(
           'Coordenadas',
@@ -88,173 +82,251 @@ class CollectionPdfService {
       if (accuracy != null)
         _InfoItem('Precisao do GPS', '+/- ${accuracy.toStringAsFixed(0)} m'),
     ];
+    final photoLocationLine = _buildPhotoLocationLine(
+      addressInfo: addressInfo,
+      latitude: latitude,
+      longitude: longitude,
+    );
 
     pdf.addPage(
       pw.MultiPage(
         pageFormat: PdfPageFormat.a4,
-        margin: const pw.EdgeInsets.all(32),
+        margin: const pw.EdgeInsets.all(28),
         build: (context) => [
-          _buildHeroHeader(
-            brandName: brandName,
-            dateStr: dateStr,
-            timeStr: timeStr,
-            fieldCount: fieldDisplays.length,
-            completedFieldCount: completedFieldCount,
-            photoCount: photoEntries.length,
+          pw.Container(
+            width: double.infinity,
+            padding: const pw.EdgeInsets.all(14),
+            decoration: pw.BoxDecoration(
+              color: PdfColor.fromHex('1565C0'),
+              borderRadius: pw.BorderRadius.circular(8),
+            ),
+            child: pw.Column(
+              crossAxisAlignment: pw.CrossAxisAlignment.start,
+              children: [
+                pw.Text(
+                  'RELATORIO DE COLETA',
+                  style: pw.TextStyle(
+                    fontSize: 12,
+                    fontWeight: pw.FontWeight.bold,
+                    color: PdfColors.white,
+                  ),
+                ),
+                pw.SizedBox(height: 5),
+                pw.Text(
+                  _sanitizePdfText(brandName),
+                  style: pw.TextStyle(
+                    fontSize: 20,
+                    fontWeight: pw.FontWeight.bold,
+                    color: PdfColors.white,
+                  ),
+                ),
+                pw.SizedBox(height: 4),
+                pw.Text(
+                  'Data: $dateStr  Hora: $timeStr',
+                  style: pw.TextStyle(
+                      fontSize: 10, color: PdfColor.fromHex('D6E9FF')),
+                ),
+              ],
+            ),
           ),
-          pw.SizedBox(height: 18),
-          _buildCollectionInfoSection(infoItems),
-          pw.SizedBox(height: 18),
-          ..._buildCollectedDataSection(fieldDisplays),
-          if (photoEntries.isNotEmpty) ...[
-            pw.SizedBox(height: 20),
-            pw.Container(
-              padding:
-                  const pw.EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-              decoration: pw.BoxDecoration(
-                color: PdfColor.fromHex('EAF3FF'),
-                borderRadius: pw.BorderRadius.circular(10),
-                border: pw.Border.all(color: PdfColor.fromHex('B8D6FF')),
-              ),
-              child: pw.Row(
-                mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
-                children: [
-                  pw.Text(
-                    'Evidencias fotograficas',
-                    style: pw.TextStyle(
-                      fontSize: 13,
-                      fontWeight: pw.FontWeight.bold,
-                      color: PdfColor.fromHex('0D47A1'),
-                    ),
-                  ),
-                  pw.Text(
-                    '${photoImages.length} foto(s) no PDF',
-                    style: pw.TextStyle(
-                        fontSize: 9, color: PdfColor.fromHex('455A64')),
-                  ),
-                ],
+          pw.SizedBox(height: 10),
+          pw.Row(
+            children: [
+              pw.Expanded(
+                  child: _metricBox('Campos', '${fieldDisplays.length}')),
+              pw.SizedBox(width: 8),
+              pw.Expanded(
+                  child: _metricBox('Preenchidos', '$completedFieldCount')),
+              pw.SizedBox(width: 8),
+              pw.Expanded(child: _metricBox('Fotos', '${photoEntries.length}')),
+            ],
+          ),
+          pw.SizedBox(height: 14),
+          _sectionTitle(
+              'Informacoes da coleta', 'DADOS DE LOCALIZACAO E HORARIO'),
+          pw.SizedBox(height: 6),
+          ...infoItems.map(
+            (item) => pw.Padding(
+              padding: const pw.EdgeInsets.only(bottom: 4),
+              child: pw.Container(
+                width: double.infinity,
+                padding:
+                    const pw.EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                decoration: pw.BoxDecoration(
+                  color: PdfColor.fromHex('F7FAFD'),
+                  border: pw.Border.all(color: PdfColor.fromHex('D8E3EE')),
+                  borderRadius: pw.BorderRadius.circular(5),
+                ),
+                child: _infoLine(item.label, item.value),
               ),
             ),
-            pw.SizedBox(height: 10),
-            pw.Wrap(
-              spacing: 10,
-              runSpacing: 12,
-              children: photoEntries.map((entry) {
-                final image = photoImages[entry];
-                final locationLine = address != null && address.isNotEmpty
-                    ? 'Local: ${_sanitizePdfText(address, fallback: '')}'
-                    : (latitude != null && longitude != null)
-                        ? 'Local: ${latitude.toStringAsFixed(6)}, ${longitude.toStringAsFixed(6)}'
-                        : null;
-                final accuracyLabel = accuracy != null
-                    ? ' | Precisao: +/- ${accuracy.toStringAsFixed(0)} m'
-                    : '';
-                final stampLine = 'Data/Hora: $dateStr $timeStr$accuracyLabel';
-
-                return pw.Container(
-                  width: 245,
-                  padding: const pw.EdgeInsets.all(6),
-                  decoration: pw.BoxDecoration(
-                    color: PdfColor.fromHex('FAFAFA'),
-                    borderRadius: pw.BorderRadius.circular(6),
-                    border: pw.Border.all(color: PdfColor.fromHex('E0E0E0')),
-                  ),
-                  child: pw.Column(
+          ),
+          pw.SizedBox(height: 10),
+          pw.Divider(),
+          pw.SizedBox(height: 8),
+          _sectionTitle('Dados coletados', 'RESUMO DOS CAMPOS PREENCHIDOS'),
+          pw.SizedBox(height: 6),
+          ...fieldDisplays.map(
+            (field) => pw.Container(
+              width: double.infinity,
+              margin: const pw.EdgeInsets.only(bottom: 6),
+              padding: const pw.EdgeInsets.all(8),
+              decoration: pw.BoxDecoration(
+                color: field.hasValue
+                    ? PdfColor.fromHex('FCFEFF')
+                    : PdfColor.fromHex('F7F9FB'),
+                border: pw.Border.all(color: PdfColor.fromHex('D0DCE8')),
+                borderRadius: pw.BorderRadius.circular(5),
+              ),
+              child: pw.Column(
+                crossAxisAlignment: pw.CrossAxisAlignment.start,
+                children: [
+                  pw.Row(
                     crossAxisAlignment: pw.CrossAxisAlignment.start,
                     children: [
-                      pw.Text(
-                        _sanitizePdfText(entry.label),
-                        style: pw.TextStyle(
-                          fontSize: 9,
-                          fontWeight: pw.FontWeight.bold,
-                          color: PdfColor.fromHex('37474F'),
+                      pw.Expanded(
+                        child: pw.Text(
+                          _sanitizePdfText(field.label),
+                          style: pw.TextStyle(
+                              fontSize: 9.5, fontWeight: pw.FontWeight.bold),
                         ),
-                        maxLines: 2,
                       ),
-                      pw.SizedBox(height: 6),
-                      if (image != null)
-                        pw.Image(
-                          image,
-                          width: 233,
-                          height: 155,
-                          fit: pw.BoxFit.cover,
-                        )
-                      else
-                        pw.Container(
-                          width: double.infinity,
-                          height: 155,
-                          alignment: pw.Alignment.center,
-                          decoration: pw.BoxDecoration(
-                            color: PdfColor.fromHex('ECEFF1'),
-                            borderRadius: pw.BorderRadius.circular(4),
-                          ),
-                          child: pw.Text(
-                            'Nao foi possivel carregar a foto',
-                            style: pw.TextStyle(
-                                fontSize: 9, color: PdfColor.fromHex('607D8B')),
-                            textAlign: pw.TextAlign.center,
-                          ),
-                        ),
-                      pw.SizedBox(height: 5),
                       pw.Container(
-                        width: double.infinity,
                         padding: const pw.EdgeInsets.symmetric(
-                            horizontal: 6, vertical: 4),
+                            horizontal: 6, vertical: 2),
                         decoration: pw.BoxDecoration(
-                          color: PdfColor.fromHex('1E2A38'),
-                          borderRadius: pw.BorderRadius.circular(3),
+                          color: _fieldTypeColor(field.fieldType),
+                          borderRadius: pw.BorderRadius.circular(4),
                         ),
-                        child: pw.Column(
-                          crossAxisAlignment: pw.CrossAxisAlignment.start,
-                          children: [
-                            pw.Text(
-                              _sanitizePdfText(stampLine),
-                              style: pw.TextStyle(
-                                fontSize: 7.5,
-                                color: PdfColors.white,
-                              ),
-                            ),
-                            if (locationLine != null) ...[
-                              pw.SizedBox(height: 2),
-                              pw.Text(
-                                _sanitizePdfText(locationLine),
-                                style: pw.TextStyle(
-                                  fontSize: 7,
-                                  color: PdfColor.fromHex('90CAF9'),
-                                ),
-                              ),
-                            ],
-                          ],
+                        child: pw.Text(
+                          _fieldTypeLabel(field.fieldType),
+                          style: pw.TextStyle(
+                            fontSize: 7.5,
+                            color: PdfColors.white,
+                            fontWeight: pw.FontWeight.bold,
+                          ),
                         ),
                       ),
                     ],
                   ),
-                );
-              }).toList(),
-            ),
-            if (hiddenPhotoCount > 0)
-              pw.Padding(
-                padding: const pw.EdgeInsets.only(top: 8),
-                child: pw.Text(
-                  '+$hiddenPhotoCount foto(s) nao incluida(s) para manter o PDF leve.',
-                  style: pw.TextStyle(
-                      fontSize: 9, color: PdfColor.fromHex('78909C')),
-                ),
+                  pw.SizedBox(height: 4),
+                  pw.Text(
+                    _sanitizePdfText(field.value),
+                    style: pw.TextStyle(
+                      fontSize: 10,
+                      color: field.hasValue
+                          ? PdfColor.fromHex('233446')
+                          : PdfColor.fromHex('6D7F93'),
+                      fontStyle: field.hasValue ? null : pw.FontStyle.italic,
+                    ),
+                  ),
+                ],
               ),
-          ],
-          pw.SizedBox(height: 24),
-          pw.Divider(color: PdfColor.fromHex('BDBDBD')),
-          pw.SizedBox(height: 8),
-          pw.Text(
-            'AG Merchandising | Gerado em $dateStr as $timeStr',
-            style: pw.TextStyle(
-              fontSize: 9,
-              color: PdfColor.fromHex('9E9E9E'),
             ),
           ),
+          if (fieldDisplays.isEmpty)
+            pw.Container(
+              width: double.infinity,
+              margin: const pw.EdgeInsets.only(top: 6),
+              padding: const pw.EdgeInsets.all(10),
+              decoration: pw.BoxDecoration(
+                color: PdfColor.fromHex('F7F9FB'),
+                border: pw.Border.all(color: PdfColor.fromHex('D0DCE8')),
+                borderRadius: pw.BorderRadius.circular(5),
+              ),
+              child: pw.Text(
+                'Nenhuma tarefa nao-foto preenchida nesta coleta.',
+                style: pw.TextStyle(
+                  fontSize: 10,
+                  color: PdfColor.fromHex('6D7F93'),
+                  fontStyle: pw.FontStyle.italic,
+                ),
+              ),
+            ),
+          pw.SizedBox(height: 16),
+          pw.Divider(),
+          pw.Text('Merch Hub | Gerado em $dateStr as $timeStr',
+              style: const pw.TextStyle(fontSize: 9)),
         ],
       ),
     );
+
+    for (final entry in photoEntries) {
+      final image = photoImages[entry];
+      final locationLine = photoLocationLine;
+      final accuracyLabel = accuracy != null
+          ? ' | Precisao: +/- ${accuracy.toStringAsFixed(0)} m'
+          : '';
+      final stampLine = 'Data/Hora: $dateStr $timeStr$accuracyLabel';
+
+      pdf.addPage(
+        pw.Page(
+          pageFormat: PdfPageFormat.a4,
+          margin: const pw.EdgeInsets.all(28),
+          build: (context) => pw.Column(
+            crossAxisAlignment: pw.CrossAxisAlignment.start,
+            children: [
+              _sectionTitle(
+                  'Evidencia fotografica', 'PAGINA EXCLUSIVA DA FOTO'),
+              pw.SizedBox(height: 8),
+              pw.Text(
+                _sanitizePdfText(entry.label),
+                style:
+                    pw.TextStyle(fontSize: 12, fontWeight: pw.FontWeight.bold),
+              ),
+              pw.SizedBox(height: 10),
+              pw.Expanded(
+                child: pw.Container(
+                  width: double.infinity,
+                  alignment: pw.Alignment.center,
+                  decoration: pw.BoxDecoration(
+                    color: PdfColor.fromHex('F2F6FA'),
+                    borderRadius: pw.BorderRadius.circular(6),
+                    border: pw.Border.all(color: PdfColor.fromHex('D5E2EE')),
+                  ),
+                  child: image != null
+                      ? pw.Image(image, fit: pw.BoxFit.contain)
+                      : pw.Text('Nao foi possivel carregar a foto'),
+                ),
+              ),
+              pw.SizedBox(height: 10),
+              pw.Container(
+                width: double.infinity,
+                padding:
+                    const pw.EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                decoration: pw.BoxDecoration(
+                  color: PdfColor.fromHex('EEF4FA'),
+                  borderRadius: pw.BorderRadius.circular(4),
+                  border: pw.Border.all(color: PdfColor.fromHex('D5E2EE')),
+                ),
+                child: pw.Text(
+                  _sanitizePdfText(stampLine),
+                  style: const pw.TextStyle(fontSize: 9),
+                ),
+              ),
+              if (locationLine != null)
+                pw.Padding(
+                  padding: const pw.EdgeInsets.only(top: 4),
+                  child: pw.Text(
+                    _sanitizePdfText(locationLine),
+                    style: const pw.TextStyle(fontSize: 9),
+                  ),
+                ),
+              if (entry.note != null && entry.note!.trim().isNotEmpty)
+                pw.Padding(
+                  padding: const pw.EdgeInsets.only(top: 4),
+                  child: pw.Text(
+                    _sanitizePdfText('Observacao: ${entry.note!}',
+                        fallback: ''),
+                    style: pw.TextStyle(
+                        fontSize: 9, color: PdfColor.fromHex('334E68')),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      );
+    }
 
     // Salva em documentos do app (persistente, acessivel offline)
     final dir = await getApplicationDocumentsDirectory();
@@ -327,8 +399,8 @@ class CollectionPdfService {
     try {
       final decoded = img.decodeImage(bytes);
       if (decoded == null) {
-        // Se nao conseguir decodificar, tenta usar bytes originais.
-        return bytes;
+        // Fallback: se bytes parecem imagem valida, tenta embutir original.
+        return _looksLikeImageBytes(bytes) ? bytes : null;
       }
 
       // Limita resolucao para reduzir risco de incompatibilidade/render branco.
@@ -347,8 +419,115 @@ class CollectionPdfService {
       // Re-encode JPEG baseline melhora compatibilidade no Chrome/visualizadores embutidos.
       return Uint8List.fromList(img.encodeJpg(processed, quality: 88));
     } catch (_) {
-      return bytes;
+      return _looksLikeImageBytes(bytes) ? bytes : null;
     }
+  }
+
+  static bool _looksLikeImageBytes(Uint8List bytes) {
+    if (bytes.length < 12) return false;
+
+    final isJpeg = bytes[0] == 0xFF && bytes[1] == 0xD8;
+    final isPng = bytes[0] == 0x89 &&
+        bytes[1] == 0x50 &&
+        bytes[2] == 0x4E &&
+        bytes[3] == 0x47;
+    final isWebp = bytes[0] == 0x52 &&
+        bytes[1] == 0x49 &&
+        bytes[2] == 0x46 &&
+        bytes[3] == 0x46 &&
+        bytes[8] == 0x57 &&
+        bytes[9] == 0x45 &&
+        bytes[10] == 0x42 &&
+        bytes[11] == 0x50;
+
+    return isJpeg || isPng || isWebp;
+  }
+
+  static pw.Widget _metricBox(String label, String value) {
+    return pw.Container(
+      padding: const pw.EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+      decoration: pw.BoxDecoration(
+        color: PdfColor.fromHex('EAF3FF'),
+        borderRadius: pw.BorderRadius.circular(6),
+        border: pw.Border.all(color: PdfColor.fromHex('C8DDF6')),
+      ),
+      child: pw.Column(
+        crossAxisAlignment: pw.CrossAxisAlignment.start,
+        children: [
+          pw.Text(label,
+              style: pw.TextStyle(
+                  fontSize: 8.5, color: PdfColor.fromHex('44617D'))),
+          pw.SizedBox(height: 4),
+          pw.Text(value,
+              style: pw.TextStyle(
+                  fontSize: 14,
+                  fontWeight: pw.FontWeight.bold,
+                  color: PdfColor.fromHex('0E3D6B'))),
+        ],
+      ),
+    );
+  }
+
+  static pw.Widget _sectionTitle(String title, String subtitle) {
+    return pw.Container(
+      width: double.infinity,
+      padding: const pw.EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: pw.BoxDecoration(
+        color: PdfColor.fromHex('EDF4FB'),
+        borderRadius: pw.BorderRadius.circular(6),
+        border: pw.Border.all(color: PdfColor.fromHex('D6E4F3')),
+      ),
+      child: pw.Column(
+        crossAxisAlignment: pw.CrossAxisAlignment.start,
+        children: [
+          pw.Text(
+            title,
+            style: pw.TextStyle(
+              fontSize: 12,
+              fontWeight: pw.FontWeight.bold,
+              color: PdfColor.fromHex('173B63'),
+            ),
+          ),
+          pw.SizedBox(height: 2),
+          pw.Text(
+            subtitle,
+            style: pw.TextStyle(
+              fontSize: 7.5,
+              color: PdfColor.fromHex('5E7895'),
+              letterSpacing: 0.7,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  static pw.Widget _infoLine(String label, String value) {
+    return pw.Row(
+      crossAxisAlignment: pw.CrossAxisAlignment.start,
+      children: [
+        pw.Container(
+          width: 108,
+          child: pw.Text(
+            _sanitizePdfText(label, fallback: ''),
+            style: pw.TextStyle(
+              fontSize: 9,
+              color: PdfColor.fromHex('4C647E'),
+              fontWeight: pw.FontWeight.bold,
+            ),
+          ),
+        ),
+        pw.Expanded(
+          child: pw.Text(
+            _sanitizePdfText(value),
+            style: pw.TextStyle(
+              fontSize: 9.5,
+              color: PdfColor.fromHex('223548'),
+            ),
+          ),
+        ),
+      ],
+    );
   }
 
   static Map<String, String?> _extractAddressInfo({
@@ -369,12 +548,75 @@ class CollectionPdfService {
     final postalFromAddress = full != null
         ? RegExp(r'\b\d{5}-?\d{3}\b').firstMatch(full)?.group(0)
         : null;
-    final numberFromAddress = full != null
-        ? RegExp(r',\s*(\d+[A-Za-z0-9\-]*)').firstMatch(full)?.group(1)
-        : null;
-    final streetFromAddress = full != null && full.contains(',')
-        ? full.split(',').first.trim()
-        : null;
+    String? streetFromAddress;
+    String? numberFromAddress;
+    String? districtFromAddress;
+    String? cityFromAddress;
+    String? stateFromAddress;
+    String? cityUfFromAddress;
+
+    if (full != null && full.isNotEmpty) {
+      // Remove sufixo de CEP para facilitar parse.
+      final withoutCep = full
+          .replaceAll(
+              RegExp(r',?\s*CEP\s*\d{5}-?\d{3}', caseSensitive: false), '')
+          .trim();
+      final cleaned = withoutCep.replaceAll(RegExp(r'\s*-\s*$'), '').trim();
+      final tokens = cleaned
+          .split(',')
+          .map((e) => e.trim())
+          .where((e) => e.isNotEmpty)
+          .toList();
+
+      if (tokens.isNotEmpty) {
+        streetFromAddress = tokens[0];
+
+        var idx = 1;
+        if (tokens.length > idx &&
+            RegExp(r'^\d+[A-Za-z0-9\-]*$').hasMatch(tokens[idx])) {
+          numberFromAddress = tokens[idx];
+          idx++;
+        }
+
+        if (tokens.length > idx) {
+          districtFromAddress = tokens[idx];
+          idx++;
+        }
+
+        if (tokens.length > idx) {
+          final cityStateRaw = tokens.sublist(idx).join(', ').trim();
+          final ufMatch =
+              RegExp(r'\b([A-Za-z]{2})\b$').firstMatch(cityStateRaw);
+          if (ufMatch != null) {
+            stateFromAddress = ufMatch.group(1)!.toUpperCase();
+            cityFromAddress = cityStateRaw.substring(0, ufMatch.start).trim();
+          } else if (_looksLikeStateName(cityStateRaw)) {
+            stateFromAddress = cityStateRaw;
+          } else {
+            cityFromAddress = cityStateRaw;
+          }
+        }
+      }
+
+      // Fallback: se numero vier no fim da rua "Rua X 822".
+      if ((numberFromAddress ?? '').isEmpty &&
+          (streetFromAddress ?? '').isNotEmpty) {
+        final m = RegExp(r'^(.*?)(?:\s+(\d+[A-Za-z0-9\-]*))$')
+            .firstMatch(streetFromAddress!);
+        if (m != null) {
+          streetFromAddress = m.group(1)?.trim();
+          numberFromAddress = m.group(2)?.trim();
+        }
+      }
+
+      if ((cityFromAddress ?? '').isNotEmpty ||
+          (stateFromAddress ?? '').isNotEmpty) {
+        cityUfFromAddress = [
+          if ((cityFromAddress ?? '').isNotEmpty) cityFromAddress!.trim(),
+          if ((stateFromAddress ?? '').isNotEmpty) stateFromAddress!.trim(),
+        ].join('/');
+      }
+    }
 
     final street = pick([
           'street',
@@ -393,25 +635,28 @@ class CollectionPdfService {
         ]) ??
         numberFromAddress;
     final district = pick([
-      'district',
-      'bairro',
-      'neighborhood',
-      'endereco_bairro',
-    ]);
+          'district',
+          'bairro',
+          'neighborhood',
+          'endereco_bairro',
+        ]) ??
+        ((districtFromAddress ?? '').isNotEmpty ? districtFromAddress : null);
     final city = pick([
-      'city',
-      'cidade',
-      'locality',
-      'municipio',
-      'endereco_cidade',
-    ]);
+          'city',
+          'cidade',
+          'locality',
+          'municipio',
+          'endereco_cidade',
+        ]) ??
+        cityFromAddress;
     final state = pick([
-      'state',
-      'uf',
-      'region',
-      'administrative_area',
-      'endereco_uf',
-    ]);
+          'state',
+          'uf',
+          'region',
+          'administrative_area',
+          'endereco_uf',
+        ]) ??
+        stateFromAddress;
     final postalCode =
         pick(['postal_code', 'cep', 'zip', 'zipcode', 'endereco_cep']) ??
             postalFromAddress;
@@ -429,6 +674,8 @@ class CollectionPdfService {
       cityUf = city;
     } else if ((state ?? '').isNotEmpty) {
       cityUf = state;
+    } else if ((cityUfFromAddress ?? '').isNotEmpty) {
+      cityUf = cityUfFromAddress!.replaceAll(' - ', '/');
     }
 
     return {
@@ -449,11 +696,11 @@ class CollectionPdfService {
     final entries = <_PhotoEntry>[];
     final seen = <String>{};
 
-    void push(String label, String url) {
+    void push(String label, String url, {String? note}) {
       final normalized = url.trim();
       if (normalized.isEmpty) return;
       if (seen.add(normalized)) {
-        entries.add(_PhotoEntry(label, normalized));
+        entries.add(_PhotoEntry(label, normalized, note: note));
       }
     }
 
@@ -463,6 +710,25 @@ class CollectionPdfService {
       for (var i = 0; i < urls.length; i++) {
         final suffix = urls.length > 1 ? ' ${i + 1}' : '';
         push('${field.fieldLabel}$suffix', urls[i]);
+      }
+    }
+
+    // Campos photo_text: inclui a observacao junto da foto.
+    for (final field in fields.where((f) => f.fieldType == 'photo_text')) {
+      final value = collectedData[field.fieldName];
+
+      String? note;
+      dynamic photoValue = value;
+      if (value is Map) {
+        photoValue = value['photo'] ?? value['photo_url'] ?? value['url'];
+        note = (value['text'] ?? value['description'] ?? value['caption'])
+            ?.toString();
+      }
+
+      final urls = _extractUrlsFromValue(photoValue);
+      for (var i = 0; i < urls.length; i++) {
+        final suffix = urls.length > 1 ? ' ${i + 1}' : '';
+        push('${field.fieldLabel}$suffix', urls[i], note: note);
       }
     }
 
@@ -484,6 +750,109 @@ class CollectionPdfService {
     }
 
     return entries;
+  }
+
+  static String? _buildPhotoLocationLine({
+    required Map<String, String?> addressInfo,
+    required double? latitude,
+    required double? longitude,
+  }) {
+    final compact = _formatAddressCompact(addressInfo);
+    if (compact != 'Nao informado') {
+      return 'Local: $compact';
+    }
+
+    if (latitude != null && longitude != null) {
+      return 'Local: ${latitude.toStringAsFixed(6)}, ${longitude.toStringAsFixed(6)} | CEP: nao informado';
+    }
+
+    return null;
+  }
+
+  static String _addrOrDefault(String? value) {
+    final v = (value ?? '').trim();
+    return v.isEmpty ? 'Nao informado' : v;
+  }
+
+  static String _formatAddressCompact(Map<String, String?> addressInfo) {
+    final street = (addressInfo['street'] ?? '').trim();
+    final number = (addressInfo['number'] ?? '').trim();
+    final district = (addressInfo['district'] ?? '').trim();
+    final cityUfRaw = (addressInfo['cityUf'] ?? '').trim();
+
+    String city = '';
+    String uf = '';
+
+    if (cityUfRaw.contains('/')) {
+      final parts = cityUfRaw.split('/');
+      city = parts.first.trim();
+      uf = parts.length > 1 ? parts[1].trim() : '';
+    } else if (cityUfRaw.contains(' - ')) {
+      final parts = cityUfRaw.split(' - ');
+      city = parts.first.trim();
+      uf = parts.length > 1 ? parts[1].trim() : '';
+    } else {
+      city = cityUfRaw;
+    }
+
+    final left = [
+      if (street.isNotEmpty)
+        (RegExp(r'^(rua|av\.?|avenida|rodovia|travessa|r\.)\b',
+                    caseSensitive: false)
+                .hasMatch(street)
+            ? street
+            : 'Rua $street'),
+      if (number.isNotEmpty) number,
+    ].join(' ');
+
+    final right = [
+      if (district.isNotEmpty) district,
+      if (city.isNotEmpty) city,
+      if (uf.isNotEmpty) uf,
+    ];
+
+    if (left.isEmpty && right.isEmpty) return 'Nao informado';
+    if (right.isEmpty) return left;
+    if (left.isEmpty) return right.join(' ');
+
+    final rightPrefix = district.isNotEmpty ? '$district - ' : '';
+    final cityUfPart =
+        [if (city.isNotEmpty) city, if (uf.isNotEmpty) uf].join(' ');
+    return '$left, $rightPrefix$cityUfPart'.trim();
+  }
+
+  static bool _looksLikeStateName(String value) {
+    final v = value.trim().toLowerCase();
+    const stateNames = {
+      'acre',
+      'alagoas',
+      'amapa',
+      'amazonas',
+      'bahia',
+      'ceara',
+      'distrito federal',
+      'espirito santo',
+      'goias',
+      'maranhao',
+      'mato grosso',
+      'mato grosso do sul',
+      'minas gerais',
+      'para',
+      'paraiba',
+      'parana',
+      'pernambuco',
+      'piaui',
+      'rio de janeiro',
+      'rio grande do norte',
+      'rio grande do sul',
+      'rondonia',
+      'roraima',
+      'santa catarina',
+      'sao paulo',
+      'sergipe',
+      'tocantins',
+    };
+    return stateNames.contains(v);
   }
 
   static List<String> _extractUrlsFromValue(dynamic value) {
@@ -562,7 +931,7 @@ class CollectionPdfService {
     await SharePlus.instance.share(
       ShareParams(
         files: [XFile(file.path)],
-        text: 'Coleta AG Merchandising - $brandName',
+        text: 'Coleta Merch Hub - $brandName',
       ),
     );
   }
@@ -614,10 +983,15 @@ class CollectionPdfService {
       accuracy: accuracy,
     );
 
-    return await ApiService.uploadCollectionPdf(
+    final uploadResult = await ApiService.uploadCollectionPdf(
       collectionId: collectionId,
       pdfFile: file,
     );
+
+    return {
+      ...uploadResult,
+      'local_file_path': file.path,
+    };
   }
 
   // Helpers internos
@@ -630,6 +1004,29 @@ class CollectionPdfService {
       case 'photo':
         if (value is List) return '${value.length} foto(s)';
         return value.toString().isNotEmpty ? '1 foto' : 'Nao informado';
+      case 'photo_text':
+        if (value is Map) {
+          final photo = value['photo'];
+          final text = value['text'];
+          final photoPart = (photo != null && photo.toString().isNotEmpty)
+              ? '1 foto'
+              : 'Sem foto';
+          final textPart = (text != null && text.toString().isNotEmpty)
+              ? _sanitizePdfText(text.toString())
+              : 'Sem descricao';
+          return '$photoPart - $textPart';
+        }
+        return 'Nao informado';
+      case 'shelf_space':
+        if (value is List && value.isNotEmpty) {
+          final facings = value
+              .whereType<Map>()
+              .map((entry) => entry['facings'])
+              .whereType<num>()
+              .fold<num>(0, (sum, item) => sum + item);
+          return '${value.length} produto(s) contado(s) - $facings frentes';
+        }
+        return 'Nao informado';
       case 'date':
         try {
           final dt = DateTime.parse(value.toString());
@@ -645,6 +1042,30 @@ class CollectionPdfService {
             : _sanitizePdfText(value.toString());
         return str.isEmpty ? 'Nao informado' : str;
     }
+  }
+
+  static String _formatFieldValue(BrandField field, dynamic value) {
+    if (field.fieldType != 'product') {
+      return _formatValue(field.fieldType, value);
+    }
+    final products = field.fieldConfig?.products ?? const [];
+    final labelsById = <String, String>{};
+    for (final product in products) {
+      if (product is Map) {
+        final id = product['value'] ?? product['id'];
+        final label =
+            product['label'] ?? product['name'] ?? product['sku'] ?? id;
+        if (id != null) labelsById[id.toString()] = label.toString();
+      }
+    }
+    final selected = value is List ? value : [value];
+    final labels = selected
+        .where((item) => item != null && item.toString().isNotEmpty)
+        .map((item) => labelsById[item.toString()] ?? item.toString())
+        .toList();
+    return labels.isEmpty
+        ? 'Nao informado'
+        : _sanitizePdfText(labels.join(', '));
   }
 
   static pw.Widget _buildHeroHeader({
@@ -996,12 +1417,18 @@ class CollectionPdfService {
         return PdfColor.fromHex('43A047');
       case 'photo':
         return PdfColor.fromHex('1E88E5');
+      case 'photo_text':
+        return PdfColor.fromHex('00ACC1');
       case 'date':
         return PdfColor.fromHex('8E24AA');
       case 'number':
         return PdfColor.fromHex('EF6C00');
       case 'textarea':
         return PdfColor.fromHex('546E7A');
+      case 'select':
+        return PdfColor.fromHex('7E57C2');
+      case 'product':
+        return PdfColor.fromHex('00897B');
       default:
         return PdfColor.fromHex('455A64');
     }
@@ -1013,12 +1440,20 @@ class CollectionPdfService {
         return 'Sim/Nao';
       case 'photo':
         return 'Foto';
+      case 'photo_text':
+        return 'Foto e texto';
       case 'date':
         return 'Data';
       case 'number':
         return 'Numero';
       case 'textarea':
         return 'Texto longo';
+      case 'select':
+        return 'Selecao';
+      case 'product':
+        return 'Produtos';
+      case 'shelf_space':
+        return 'Espaco na gondola';
       default:
         return 'Texto';
     }
@@ -1043,15 +1478,24 @@ class CollectionPdfService {
         .trim();
 
     if (text.isEmpty) return fallback;
-    return text;
+
+    // Mantem apenas caracteres seguros para as fontes base (Helvetica)
+    // e evita glifos invalidos quebrando renderizacao do PDF.
+    final safe = text
+        .replaceAll(RegExp(r'[^\x09\x0A\x0D\x20-\x7E\xA0-\xFF]'), '')
+        .replaceAll(RegExp(r'\n{3,}'), '\n\n')
+        .trim();
+
+    return safe.isEmpty ? fallback : safe;
   }
 }
 
 class _PhotoEntry {
   final String label;
   final String url;
+  final String? note;
 
-  const _PhotoEntry(this.label, this.url);
+  const _PhotoEntry(this.label, this.url, {this.note});
 }
 
 class _InfoItem {

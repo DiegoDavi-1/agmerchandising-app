@@ -2,7 +2,8 @@
 class BrandField {
   final int id;
   final int brandId;
-  final String fieldType; // checkbox, photo, text, number, date, textarea
+  final String
+      fieldType; // checkbox, photo, text, number, date, textarea, select, product, shelf_space
   final String fieldLabel;
   final String fieldName;
   final BrandFieldConfig? fieldConfig;
@@ -26,7 +27,8 @@ class BrandField {
       fieldLabel: json['field_label'] as String,
       fieldName: json['field_name'] as String,
       fieldConfig: json['field_config'] != null
-          ? BrandFieldConfig.fromJson(json['field_config'] as Map<String, dynamic>)
+          ? BrandFieldConfig.fromJson(
+              json['field_config'] as Map<String, dynamic>)
           : null,
       displayOrder: json['display_order'] as int? ?? 0,
     );
@@ -48,36 +50,52 @@ class BrandField {
 // Configurações específicas de cada campo
 class BrandFieldConfig {
   final bool? required;
+  final bool? requiredText;
   final bool? allowMultiple;
   final int? maxPhotos;
   final int? min;
   final int? max;
+  final List<dynamic> options;
+  final List<dynamic> products;
 
   BrandFieldConfig({
     this.required,
+    this.requiredText,
     this.allowMultiple,
     this.maxPhotos,
     this.min,
     this.max,
+    this.options = const [],
+    this.products = const [],
   });
 
   factory BrandFieldConfig.fromJson(Map<String, dynamic> json) {
     return BrandFieldConfig(
       required: json['required'] as bool?,
+      requiredText: json['required_text'] as bool?,
       allowMultiple: json['allow_multiple'] as bool?,
       maxPhotos: json['max_photos'] as int?,
       min: json['min'] as int?,
       max: json['max'] as int?,
+      options: json['options'] is List
+          ? List<dynamic>.from(json['options'] as List)
+          : const [],
+      products: json['products'] is List
+          ? List<dynamic>.from(json['products'] as List)
+          : const [],
     );
   }
 
   Map<String, dynamic> toJson() {
     return {
       'required': required,
+      'required_text': requiredText,
       'allow_multiple': allowMultiple,
       'max_photos': maxPhotos,
       'min': min,
       'max': max,
+      'options': options,
+      'products': products,
     };
   }
 }

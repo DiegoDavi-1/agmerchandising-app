@@ -56,9 +56,9 @@ class _SkeletonCardState extends State<SkeletonCard>
               begin: Alignment(_animation.value - 1, 0),
               end: Alignment(_animation.value, 0),
               colors: const [
-                Color(0xFF3d2b5e),
-                Color(0xFF4d3b6e),
-                Color(0xFF3d2b5e),
+                Color(0xFF1A2233),
+                Color(0xFF243047),
+                Color(0xFF1A2233),
               ],
             ),
           ),

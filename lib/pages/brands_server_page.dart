@@ -2,9 +2,11 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../services/api_service.dart';
+import '../services/api_config.dart';
 import '../services/schedule_service.dart';
 import '../core/logging/app_logger_v2.dart';
 import 'dynamic_brand_collection_page.dart';
+import 'week_schedule_page.dart';
 
 class BrandsServerPage extends StatefulWidget {
   const BrandsServerPage({super.key});
@@ -27,6 +29,7 @@ class _BrandsServerPageState extends State<BrandsServerPage> {
   final int _limit = 20;
   String _searchQuery = '';
   String _todayName = '';
+  String _tomorrowName = '';
   int _todayNumber = 0;
   bool _showOnlyToday = true;
   bool _showCompleted = true; // seção concluídas expansível
@@ -72,35 +75,25 @@ class _BrandsServerPageState extends State<BrandsServerPage> {
         _hasMore = true;
       }
 
-      // Usar ScheduleService para buscar marcas do dia
-      if (_showOnlyToday) {
-        final result = await ScheduleService.getBrandsToday();
-        setState(() {
-          _brands = result['brands'] as List<dynamic>;
-          _todayName = result['day_name'] as String;
-          _todayNumber = result['today'] as int;
-          _hasMore = false; // Não há paginação para marcas do dia
-          _applyFilter();
-        });
-      } else {
-        final list = await ApiService.getBrands(
-          page: _page,
-          limit: _limit,
-          forceRefresh: forceRefresh && _page == 1,
-        );
+      // Usar visão de agenda (hoje/amanhã) para controlar acesso e exibição.
+      final overview = await ScheduleService.getBrandsScheduleOverview();
+      final allBrandsRaw = List<dynamic>.from(overview['brands'] as List<dynamic>);
+      // Remove marcas duplicadas (mesmo id) que a API possa retornar, para
+      // não exibir o mesmo atendimento mais de uma vez.
+      final seenIds = <dynamic>{};
+      final allBrands = allBrandsRaw.where((b) => seenIds.add(b['id'])).toList();
+      final todayBrands = allBrands
+          .where((brand) => brand['can_collect_today'] == true)
+          .toList();
 
-        setState(() {
-          if (reset) {
-            _brands = list;
-          } else {
-            _brands.addAll(list);
-          }
-
-          _hasMore = list.length == _limit;
-          _page++;
-          _applyFilter();
-        });
-      }
+      setState(() {
+        _brands = _showOnlyToday ? todayBrands : allBrands;
+        _todayName = (overview['today_name'] ?? '').toString();
+        _tomorrowName = (overview['tomorrow_name'] ?? '').toString();
+        _todayNumber = (overview['today'] as int?) ?? 0;
+        _hasMore = false; // lista completa em uma chamada
+        _applyFilter();
+      });
     } catch (e) {
       appLogger.error('Erro ao carregar marcas', error: e);
       if (mounted) {
@@ -161,7 +154,8 @@ class _BrandsServerPageState extends State<BrandsServerPage> {
             onPressed: () async {
               await ApiService.logout();
               if (mounted) {
-                Navigator.pushReplacementNamed(context, '/login');
+                Navigator.pushNamedAndRemoveUntil(
+                    context, '/login', (route) => false);
               }
             },
             child: const Text('Sair', style: TextStyle(color: Colors.red)),
@@ -190,7 +184,7 @@ class _BrandsServerPageState extends State<BrandsServerPage> {
                   height: 16,
                   margin: const EdgeInsets.only(right: 8),
                   decoration: BoxDecoration(
-                    color: const Color(0xFF1E88E5),
+                    color: const Color(0xFF0F766E),
                     borderRadius: BorderRadius.circular(2),
                   ),
                 ),
@@ -261,6 +255,16 @@ class _BrandsServerPageState extends State<BrandsServerPage> {
   }
 
   Widget _buildBrandCard(dynamic brand, bool isDark, bool isCompleted) {
+    final canCollectToday = brand['can_collect_today'] != false;
+    final tomorrowAssignment = brand['tomorrow_assignment'];
+    final tomorrowStoreLabel = _formatAssignmentStore(tomorrowAssignment);
+
+    final subtitleText = !canCollectToday
+        ? (tomorrowStoreLabel.isNotEmpty
+            ? 'Agendada para ${_tomorrowName.isNotEmpty ? _tomorrowName : 'amanhã'}: $tomorrowStoreLabel'
+            : 'Agendada para ${_tomorrowName.isNotEmpty ? _tomorrowName : 'amanhã'}')
+        : (brand['description'] ?? 'Sem descrição').toString();
+
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       decoration: BoxDecoration(
@@ -290,14 +294,15 @@ class _BrandsServerPageState extends State<BrandsServerPage> {
                     ? Colors.green.withOpacity(0.12)
                     : (isDark ? Colors.blue[950] : Colors.blue[100]),
                 borderRadius: BorderRadius.circular(8),
-                image: brand['logo_url'] != null
+                image: ApiConfig.resolveAssetUrl(brand['logo_url']) != null
                     ? DecorationImage(
-                        image: NetworkImage(brand['logo_url']),
-                        fit: BoxFit.cover,
+                        image: NetworkImage(ApiConfig.resolveAssetUrl(brand['logo_url'])!),
+                        fit: BoxFit.contain,
+                        onError: (_, __) {},
                       )
                     : null,
               ),
-              child: brand['logo_url'] == null
+              child: ApiConfig.resolveAssetUrl(brand['logo_url']) == null
                   ? Icon(
                       isCompleted ? Icons.check_circle_outline : Icons.shopping_bag,
                       color: isCompleted ? Colors.green : (isDark ? Colors.blue[400] : Colors.blue[400]),
@@ -319,6 +324,23 @@ class _BrandsServerPageState extends State<BrandsServerPage> {
                     ),
                   ),
                   child: const Icon(Icons.check, color: Colors.white, size: 14),
+                ),
+              ),
+            if (!canCollectToday)
+              Positioned(
+                left: -4,
+                top: -4,
+                child: Container(
+                  padding: const EdgeInsets.all(3),
+                  decoration: BoxDecoration(
+                    color: Colors.orange,
+                    shape: BoxShape.circle,
+                    border: Border.all(
+                      color: isDark ? const Color(0xFF1A1F2E) : Colors.white,
+                      width: 2,
+                    ),
+                  ),
+                  child: const Icon(Icons.lock_clock, color: Colors.white, size: 12),
                 ),
               ),
           ],
@@ -355,11 +377,13 @@ class _BrandsServerPageState extends State<BrandsServerPage> {
           ],
         ),
         subtitle: Text(
-          brand['description'] ?? 'Sem descrição',
+          subtitleText,
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
           style: TextStyle(
-            color: isCompleted
+            color: !canCollectToday
+                ? Colors.orange
+                : isCompleted
                 ? Colors.green.withOpacity(0.7)
                 : (isDark ? Colors.grey[500] : Colors.grey[600]),
             fontSize: 12,
@@ -370,6 +394,20 @@ class _BrandsServerPageState extends State<BrandsServerPage> {
           color: isCompleted ? Colors.green : (isDark ? Colors.grey[600] : Colors.grey[400]),
         ),
         onTap: () async {
+          if (!canCollectToday) {
+            final tomorrowLabel = _tomorrowName.isNotEmpty ? _tomorrowName : 'amanhã';
+            final storeInfo = tomorrowStoreLabel.isNotEmpty ? ' na loja $tomorrowStoreLabel' : '';
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text('Essa marca está agendada para $tomorrowLabel$storeInfo.'),
+                  backgroundColor: Colors.orange,
+                ),
+              );
+            }
+            return;
+          }
+
           final result = await Navigator.push(
             context,
             MaterialPageRoute(
@@ -398,6 +436,19 @@ class _BrandsServerPageState extends State<BrandsServerPage> {
     );
   }
 
+  String _formatAssignmentStore(dynamic assignment) {
+    if (assignment is! Map<String, dynamic>) return '';
+    final storeName = (assignment['store_name'] ?? '').toString().trim();
+    final storeNumber = assignment['store_number'];
+
+    if (storeName.isNotEmpty && storeNumber != null) {
+      return '$storeName (#$storeNumber)';
+    }
+    if (storeName.isNotEmpty) return storeName;
+    if (storeNumber != null) return '#$storeNumber';
+    return '';
+  }
+
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
@@ -405,11 +456,19 @@ class _BrandsServerPageState extends State<BrandsServerPage> {
     return Scaffold(
       backgroundColor: isDark ? const Color(0xFF0F1419) : Colors.white,
       appBar: AppBar(
-        title: Text('Marcas', style: GoogleFonts.poppins(fontWeight: FontWeight.w700, letterSpacing: 0.5)),
+        title: Text('Atendimentos', style: GoogleFonts.poppins(fontWeight: FontWeight.w700, letterSpacing: 0.5)),
         elevation: 8,
         shadowColor: isDark ? Colors.black.withValues(alpha: 0.3) : Colors.blue.withValues(alpha: 0.4),
-        backgroundColor: isDark ? const Color(0xFF1A1F2E) : const Color(0xFF1E88E5),
+        backgroundColor: isDark ? const Color(0xFF1A1F2E) : const Color(0xFF0F766E),
         actions: [
+          IconButton(
+            tooltip: 'Agenda semanal',
+            icon: const Icon(Icons.calendar_month),
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const WeekSchedulePage()),
+            ),
+          ),
           IconButton(
             icon: const Icon(Icons.refresh),
             onPressed: _refreshBrands,

@@ -1,7 +1,16 @@
 /// Configuração da API
 class ApiConfig {
   // Servidor de Produção VPS (HTTPS com domínio)
-  static const String baseUrl = 'https://agmerchandising.com/api';
+  static const String baseUrl = 'https://merchhubapp.com/api';
+
+  /// Converte caminhos relativos (/uploads/...) em URL absoluta do servidor.
+  static String? resolveAssetUrl(dynamic value) {
+    final raw = value?.toString().trim() ?? '';
+    if (raw.isEmpty) return null;
+    if (raw.startsWith('http://') || raw.startsWith('https://')) return raw;
+    final origin = baseUrl.replaceFirst(RegExp(r'/api/?$'), '');
+    return raw.startsWith('/') ? '$origin$raw' : '$origin/$raw';
+  }
   
   // Alternativas para desenvolvimento:
   // Android emulador: http://10.0.2.2:5000/api

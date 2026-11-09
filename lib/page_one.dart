@@ -48,6 +48,10 @@ class _UmWidgetState extends State<UmWidget> {
 
       if (result['success'] == true && mounted) {
         appLogger.info('✓ Login realizado: ${result['user']?['name'] ?? loginController.text.trim()}');
+        final user = result['user'];
+        if (user is Map<String, dynamic>) {
+          await ApiService.saveUserData(user);
+        }
         Navigator.pushReplacementNamed(context, '/menu');
       } else if (mounted) {
         _showError(result['error']?.toString() ?? 'Login inválido');
@@ -90,7 +94,7 @@ class _UmWidgetState extends State<UmWidget> {
                   colors: [
                     Colors.black,
                     const Color(0xFF1a1a1a),
-                    const Color(0xFF2d1b4e),
+                    const Color(0xFF0F172A),
                   ],
                   begin: Alignment.topCenter,
                   end: Alignment.bottomCenter,
@@ -111,42 +115,22 @@ class _UmWidgetState extends State<UmWidget> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.center,
                     children: [
-                      // Logo
+                      // Logo completa (ícone + nome)
                       Image.asset(
                         'assets/images/logo_ag.png',
-                        width: 200,
-                        height: 200,
+                        width: 260,
                         fit: BoxFit.contain,
                         errorBuilder: (context, error, stackTrace) {
-                          return Container(
-                            width: 200,
-                            height: 200,
-                            decoration: BoxDecoration(
-                              shape: BoxShape.circle,
-                              gradient: const LinearGradient(
-                                colors: [Color(0xFF1E88E5), Color(0xFF1E88E5)],
-                                begin: Alignment.topLeft,
-                                end: Alignment.bottomRight,
-                              ),
-                            ),
-                            child: const Icon(
-                              Icons.shopping_cart,
-                              size: 100,
+                          return Text(
+                            'Merch Hub',
+                            textAlign: TextAlign.center,
+                            style: GoogleFonts.poppins(
+                              fontSize: 28,
+                              fontWeight: FontWeight.w600,
                               color: Colors.white,
                             ),
                           );
                         },
-                      ),
-                      const SizedBox(height: 12),
-                      // Título
-                      Text(
-                        'Ag Merchandising',
-                        textAlign: TextAlign.center,
-                        style: GoogleFonts.poppins(
-                          fontSize: 28,
-                          fontWeight: FontWeight.w600,
-                          color: Colors.white,
-                        ),
                       ),
                     ],
                   ),
@@ -185,7 +169,7 @@ class _UmWidgetState extends State<UmWidget> {
                                 borderRadius: BorderRadius.circular(12),
                               ),
                               focusedBorder: OutlineInputBorder(
-                                borderSide: const BorderSide(color: Color(0xFF9C3FE4), width: 2),
+                                borderSide: const BorderSide(color: Color(0xFF0F766E), width: 2),
                                 borderRadius: BorderRadius.circular(12),
                               ),
                             ),
@@ -207,7 +191,7 @@ class _UmWidgetState extends State<UmWidget> {
                                 borderRadius: BorderRadius.circular(12),
                               ),
                               focusedBorder: OutlineInputBorder(
-                                borderSide: const BorderSide(color: Color(0xFF9C3FE4), width: 2),
+                                borderSide: const BorderSide(color: Color(0xFF0F766E), width: 2),
                                 borderRadius: BorderRadius.circular(12),
                               ),
                               suffixIcon: IconButton(
@@ -231,7 +215,7 @@ class _UmWidgetState extends State<UmWidget> {
                             height: 50,
                             decoration: BoxDecoration(
                               gradient: const LinearGradient(
-                                colors: [Color(0xFF9C3FE4), Color(0xFFC65647)],
+                                colors: [Color(0xFF0F766E), Color(0xFF2563EB)],
                                 begin: Alignment.centerLeft,
                                 end: Alignment.centerRight,
                               ),

@@ -2,6 +2,7 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:intl/intl.dart';
 
 class NotificationService {
+  static void Function()? onMessageTap;
   static final NotificationService _instance = NotificationService._internal();
   factory NotificationService() => _instance;
   NotificationService._internal();
@@ -27,9 +28,18 @@ class NotificationService {
     await _notifications.initialize(
       initSettings,
       onDidReceiveNotificationResponse: (details) {
-        // Callback quando o usuário toca na notificação
+        onMessageTap?.call();
       },
     );
+    await _notifications
+        .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()
+        ?.createNotificationChannel(const AndroidNotificationChannel(
+          'messages_channel', 'Mensagens',
+          description: 'Mensagens da gestão e respostas do suporte',
+          importance: Importance.high,
+        ));
+    final launch = await _notifications.getNotificationAppLaunchDetails();
+    if (launch?.didNotificationLaunchApp == true) onMessageTap?.call();
 
     // Solicitar permissões (Android 13+)
     await _notifications
@@ -123,6 +133,30 @@ class NotificationService {
         );
       }
     }
+  }
+
+  Future<void> showMessageNotification({
+    required int id,
+    required String title,
+    required String body,
+  }) async {
+    if (!_initialized) await initialize();
+    const details = NotificationDetails(
+      android: AndroidNotificationDetails(
+        'messages_channel',
+        'Mensagens',
+        channelDescription: 'Mensagens da gestão e respostas do suporte',
+        importance: Importance.high,
+        priority: Priority.high,
+        icon: '@mipmap/ic_launcher',
+      ),
+      iOS: DarwinNotificationDetails(
+        presentAlert: true,
+        presentBadge: true,
+        presentSound: true,
+      ),
+    );
+    await _notifications.show(id, title, body, details);
   }
 
   Future<void> cancelAllNotifications() async {

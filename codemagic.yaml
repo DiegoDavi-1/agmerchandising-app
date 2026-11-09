@@ -1,0 +1,31 @@
+workflows:
+  ios-testflight:
+    name: iOS TestFlight
+    max_build_duration: 120
+    instance_type: mac_mini_m2
+    integrations:
+      app_store_connect: Merch Hub App Store Connect
+    environment:
+      ios_signing:
+        distribution_type: app_store
+        bundle_identifier: com.merchhub.app
+      flutter: 3.38.5
+      xcode: latest
+      cocoapods: default
+    scripts:
+      - name: Get Flutter packages
+        script: flutter pub get
+      - name: Install CocoaPods
+        script: pod install --project-directory=ios
+      - name: Apply iOS signing profiles
+        script: xcode-project use-profiles
+      - name: Build signed IPA
+        script: |
+          NEXT_BUILD_NUMBER=$((27 + BUILD_NUMBER))
+          flutter build ipa --release --build-number="$NEXT_BUILD_NUMBER"
+    artifacts:
+      - build/ios/ipa/*.ipa
+    publishing:
+      app_store_connect:
+        auth: integration
+        submit_to_testflight: false

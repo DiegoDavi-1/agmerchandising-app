@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "801775290947",
+    "project_id": "merch-hub-4a78a",
+    "storage_bucket": "merch-hub-4a78a.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:801775290947:android:648986cd4980aaf24222f6",
+        "android_client_info": {
+          "package_name": "com.merchhub.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDHnNXgd9ct3QvkAMzX6acGXnslceYDaKE"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

@@ -1,11 +1,13 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../services/theme_service.dart';
 import '../services/biometric_service.dart';
 import '../services/export_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
+import 'help_center_page.dart';
 
 class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key});
@@ -51,23 +53,26 @@ class _SettingsPageState extends State<SettingsPage> {
     _isDarkMode = _themeService.isDarkMode;
     _biometricEnabled = await _biometricService.isBiometricEnabled();
     _biometricAvailable = await _biometricService.canCheckBiometrics();
-    
+
     final prefs = await SharedPreferences.getInstance();
     _notificationsEnabled = prefs.getBool('notifications_enabled') ?? true;
-    
+
     if (mounted) setState(() {});
   }
 
   @override
   Widget build(BuildContext context) {
     isDark = Theme.of(context).brightness == Brightness.dark;
-    
+
     return Scaffold(
       backgroundColor: isDark ? const Color(0xFF0F1419) : Colors.white,
       appBar: AppBar(
-        backgroundColor: isDark ? const Color(0xFF1A1F2E) : const Color(0xFF1E88E5),
+        backgroundColor:
+            isDark ? const Color(0xFF1A1F2E) : const Color(0xFF0F766E),
         elevation: 8,
-        shadowColor: isDark ? Colors.black.withValues(alpha: 0.3) : Colors.blue.withValues(alpha: 0.4),
+        shadowColor: isDark
+            ? Colors.black.withValues(alpha: 0.3)
+            : Colors.blue.withValues(alpha: 0.4),
         title: Text(
           'Configurações',
           style: GoogleFonts.poppins(
@@ -95,19 +100,20 @@ class _SettingsPageState extends State<SettingsPage> {
               onChanged: (value) async {
                 await _themeService.toggleTheme();
               },
-              activeColor: const Color(0xFF1E88E5),
+              activeColor: const Color(0xFF0F766E),
             ),
           ),
-          
+
           const SizedBox(height: 24),
-          
+
           // Segurança
           _buildSectionTitle('Segurança'),
           _buildSettingTile(
             icon: Icons.fingerprint,
             title: 'Autenticação Biométrica',
-            subtitle: _biometricAvailable ? null : 'Não disponível neste dispositivo',
-            trailing: _biometricAvailable 
+            subtitle:
+                _biometricAvailable ? null : 'Não disponível neste dispositivo',
+            trailing: _biometricAvailable
                 ? Switch(
                     value: _biometricEnabled,
                     onChanged: (value) async {
@@ -124,13 +130,13 @@ class _SettingsPageState extends State<SettingsPage> {
                         setState(() => _biometricEnabled = false);
                       }
                     },
-                    activeColor: const Color(0xFF1E88E5),
+                    activeColor: const Color(0xFF0F766E),
                   )
                 : null,
           ),
-          
+
           const SizedBox(height: 24),
-          
+
           // Notificações
           _buildSectionTitle('Notificações'),
           _buildSettingTile(
@@ -143,29 +149,18 @@ class _SettingsPageState extends State<SettingsPage> {
                 await prefs.setBool('notifications_enabled', value);
                 setState(() => _notificationsEnabled = value);
               },
-              activeColor: const Color(0xFF1E88E5),
+              activeColor: const Color(0xFF0F766E),
             ),
           ),
-          
+
           const SizedBox(height: 24),
-          
+
           // Dados
           _buildSectionTitle('Dados'),
           _buildSettingTile(
             icon: Icons.file_download,
-            title: 'Exportar Validades (Excel)',
-            onTap: () => _exportValidades(),
-          ),
-          _buildSettingTile(
-            icon: Icons.file_download,
             title: 'Exportar Validades (CSV)',
             onTap: () => _exportValidadesCSV(),
-          ),
-          _buildSettingTile(
-            icon: Icons.backup,
-            title: 'Backup Google Drive',
-            subtitle: 'Fazer backup completo dos dados',
-            onTap: () => _backupToDrive(),
           ),
           _buildSettingTile(
             icon: Icons.delete_sweep,
@@ -173,18 +168,32 @@ class _SettingsPageState extends State<SettingsPage> {
             subtitle: 'Liberar espaço em disco',
             onTap: () => _clearCache(),
           ),
-          
+
           const SizedBox(height: 24),
-          
+
+          _buildSectionTitle('Ajuda'),
+          _buildSettingTile(
+            icon: Icons.support_agent,
+            title: 'Suporte',
+            subtitle: 'Manual de uso, treinamentos e relato de bugs',
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const HelpCenterPage()),
+            ),
+          ),
+
+          const SizedBox(height: 24),
+
           // Informações
           _buildSectionTitle('Informações'),
           _buildSettingTile(
             icon: Icons.info,
             title: 'Versão',
             trailing: Text(
-              '6.4.2',
+              '1.0.11',
               style: GoogleFonts.poppins(
-                color: Colors.white70,
+                color: isDark ? Colors.white70 : const Color(0xFF64748B),
                 fontSize: 14,
               ),
             ),
@@ -192,7 +201,21 @@ class _SettingsPageState extends State<SettingsPage> {
           _buildSettingTile(
             icon: Icons.code,
             title: 'Sobre',
-            subtitle: 'AG Merchandising App',
+            subtitle: 'Merch Hub App',
+          ),
+          _buildSettingTile(
+            icon: Icons.privacy_tip_outlined,
+            title: 'Política de Privacidade',
+            subtitle: 'Conheça como seus dados são tratados',
+            trailing: const Icon(Icons.open_in_new, size: 18),
+            onTap: _openPrivacyPolicy,
+          ),
+          _buildSettingTile(
+            icon: Icons.description_outlined,
+            title: 'Termos de Uso',
+            subtitle: 'Regras para usar a plataforma',
+            trailing: const Icon(Icons.open_in_new, size: 18),
+            onTap: _openTerms,
           ),
         ],
       ),
@@ -205,7 +228,7 @@ class _SettingsPageState extends State<SettingsPage> {
       child: Text(
         title,
         style: GoogleFonts.poppins(
-          color: const Color(0xFF1E88E5),
+          color: const Color(0xFF0F766E),
           fontSize: 16,
           fontWeight: FontWeight.bold,
         ),
@@ -227,7 +250,7 @@ class _SettingsPageState extends State<SettingsPage> {
         borderRadius: BorderRadius.circular(12),
       ),
       child: ListTile(
-        leading: Icon(icon, color: const Color(0xFF1E88E5)),
+        leading: Icon(icon, color: const Color(0xFF0F766E)),
         title: Text(
           title,
           style: GoogleFonts.poppins(
@@ -251,37 +274,10 @@ class _SettingsPageState extends State<SettingsPage> {
     );
   }
 
-  Future<void> _exportValidades() async {
-    try {
-      _showLoading('Exportando...');
-      
-      final prefs = await SharedPreferences.getInstance();
-      final validadesJson = prefs.getStringList('validades') ?? [];
-      final validades = validadesJson.map((e) => jsonDecode(e)).toList();
-
-      if (validades.isEmpty) {
-        Navigator.pop(context);
-        _showMessage('Nenhuma validade para exportar');
-        return;
-      }
-
-      final file = await _exportService.exportValidadesToExcel(validades);
-      Navigator.pop(context);
-
-      await Share.shareXFiles(
-        [XFile(file.path)],
-        text: 'Relatório de Validades',
-      );
-    } catch (e) {
-      Navigator.pop(context);
-      _showMessage('Erro ao exportar: $e');
-    }
-  }
-
   Future<void> _exportValidadesCSV() async {
     try {
       _showLoading('Exportando...');
-      
+
       final prefs = await SharedPreferences.getInstance();
       final validadesJson = prefs.getStringList('validades') ?? [];
       final validades = validadesJson.map((e) => jsonDecode(e)).toList();
@@ -302,21 +298,6 @@ class _SettingsPageState extends State<SettingsPage> {
     } catch (e) {
       Navigator.pop(context);
       _showMessage('Erro ao exportar: $e');
-    }
-  }
-
-  Future<void> _backupToDrive() async {
-    try {
-      _showLoading('Fazendo backup...');
-      
-      // TODO: Coletar todos os dados e criar arquivo JSON
-      // final success = await _driveService.backupData(dataFile);
-      
-      Navigator.pop(context);
-      _showMessage('Backup em desenvolvimento\n\nConfigure as credenciais OAuth2 em google_drive_service.dart');
-    } catch (e) {
-      Navigator.pop(context);
-      _showMessage('Erro no backup: $e');
     }
   }
 
@@ -343,7 +324,7 @@ class _SettingsPageState extends State<SettingsPage> {
           ElevatedButton(
             onPressed: () => Navigator.pop(context, true),
             style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF1E88E5),
+              backgroundColor: const Color(0xFF0F766E),
             ),
             child: Text(
               'Limpar',
@@ -359,6 +340,24 @@ class _SettingsPageState extends State<SettingsPage> {
     }
   }
 
+  Future<void> _openPrivacyPolicy() async {
+    final uri = Uri.parse(
+      'https://merchhubapp.com/app/politica-de-privacidade',
+    );
+    final opened = await launchUrl(uri, mode: LaunchMode.externalApplication);
+    if (!opened && mounted) {
+      _showMessage('Não foi possível abrir a Política de Privacidade');
+    }
+  }
+
+  Future<void> _openTerms() async {
+    final uri = Uri.parse('https://merchhubapp.com/app/termos-de-uso');
+    final opened = await launchUrl(uri, mode: LaunchMode.externalApplication);
+    if (!opened && mounted) {
+      _showMessage('Não foi possível abrir os Termos de Uso');
+    }
+  }
+
   void _showLoading(String message) {
     showDialog(
       context: context,
@@ -369,12 +368,13 @@ class _SettingsPageState extends State<SettingsPage> {
           mainAxisSize: MainAxisSize.min,
           children: [
             const CircularProgressIndicator(
-              color: Color(0xFF1E88E5),
+              color: Color(0xFF0F766E),
             ),
             const SizedBox(height: 16),
             Text(
               message,
-              style: GoogleFonts.poppins(color: isDark ? Colors.white : Colors.black),
+              style: GoogleFonts.poppins(
+                  color: isDark ? Colors.white : Colors.black),
             ),
           ],
         ),

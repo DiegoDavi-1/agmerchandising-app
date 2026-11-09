@@ -58,10 +58,19 @@ class ThemeService extends ChangeNotifier {
     notifyListeners();
   }
 
-  // Cor primária azul moderna
-  static const Color primaryBlue = Color(0xFF1E88E5);
-  static const Color primaryBlueDark = Color(0xFF0D47A1);
-  static const Color accentBlue = Color(0xFF42A5F5);
+  // Paleta oficial do Painel Admin (Merch Hub Design System)
+  static const Color primaryBlue = Color(0xFF0F766E); // --primary (teal)
+  static const Color primaryBlueDark = Color(0xFF115E59); // --primary-hover
+  static const Color accentBlue = Color(0xFF2563EB); // --accent (azul)
+  static const Color accentBlueHover = Color(0xFF1D4ED8); // --accent-hover
+  static const Color dangerColor = Color(0xFFEF4444); // --danger
+  static const Color warningColor = Color(0xFFF59E0B); // --warning
+  static const Color successColor = Color(0xFF10B981); // --success
+  static const Color infoColor = Color(0xFF0EA5E9); // --info
+  static const Color sidebarDark = Color(0xFF0F172A); // --bg-sidebar
+  static const Color pageBg = Color(0xFFF8FAFC); // --bg-page
+  static const Color textMain = Color(0xFF0F172A); // --text-main
+  static const Color textMuted = Color(0xFF64748B); // --text-muted
 
   ThemeData get lightTheme => ThemeData(
     useMaterial3: true,
@@ -69,10 +78,14 @@ class ThemeService extends ChangeNotifier {
     colorScheme: ColorScheme.fromSeed(
       seedColor: primaryBlue,
       brightness: Brightness.light,
+      primary: primaryBlue,
+      secondary: accentBlue,
+      error: dangerColor,
+      surface: Colors.white,
     ),
-    scaffoldBackgroundColor: Colors.white,
+    scaffoldBackgroundColor: pageBg,
     appBarTheme: const AppBarTheme(
-      backgroundColor: primaryBlue,
+      backgroundColor: sidebarDark,
       foregroundColor: Colors.white,
       elevation: 0,
     ),
@@ -121,16 +134,19 @@ class ThemeService extends ChangeNotifier {
     colorScheme: ColorScheme.fromSeed(
       seedColor: primaryBlue,
       brightness: Brightness.dark,
+      primary: accentBlue,
+      secondary: primaryBlue,
+      error: dangerColor,
     ),
-    scaffoldBackgroundColor: const Color(0xFF0F1419),
-    cardColor: const Color(0xFF1A1F2E),
+    scaffoldBackgroundColor: sidebarDark,
+    cardColor: const Color(0xFF1A2233),
     appBarTheme: const AppBarTheme(
-      backgroundColor: primaryBlueDark,
+      backgroundColor: sidebarDark,
       foregroundColor: Colors.white,
       elevation: 0,
     ),
     cardTheme: CardThemeData(
-      color: const Color(0xFF1A1F2E),
+      color: const Color(0xFF1A2233),
       elevation: 0,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
     ),

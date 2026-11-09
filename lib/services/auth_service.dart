@@ -22,7 +22,7 @@ class AuthService {
   List<String>? _userPermissions;
 
   // URL do servidor - CONFIGURAR QUANDO DISPONÍVEL
-  static const String serverUrl = 'https://agmerchandising.com/api';
+  static const String serverUrl = 'https://merchhubapp.com/api';
   static const bool serverEnabled = true; // ✅ SERVIDOR HABILITADO
 
   /// Verifica se o usuário está autenticado

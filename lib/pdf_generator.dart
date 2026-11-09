@@ -11,10 +11,10 @@ import 'models/brand_data.dart';
 
 class PDFGenerator {
   // Cores do tema
-  static const _primaryColor = PdfColor.fromInt(0xFF9C3FE4);
+  static const _primaryColor = PdfColor.fromInt(0xFF0F766E);
   // _secondaryColor disponível para uso futuro: 0xFF6B21A8
   static const _accentColor = PdfColor.fromInt(0xFFF59E0B);
-  static const _successColor = PdfColor.fromInt(0xFF22C55E);
+  static const _successColor = PdfColor.fromInt(0xFF10B981);
   static const _dangerColor = PdfColor.fromInt(0xFFEF4444);
   static const _bgLight = PdfColor.fromInt(0xFFF8F9FA);
   static const _textDark = PdfColor.fromInt(0xFF1F2937);
@@ -40,7 +40,7 @@ class PDFGenerator {
     // Carregar logo do app
     pw.MemoryImage? logoImage;
     try {
-      final logoData = await rootBundle.load('assets/images/logo_ag.png');
+      final logoData = await rootBundle.load('assets/images/icon.png');
       logoImage = pw.MemoryImage(logoData.buffer.asUint8List());
     } catch (e) {
       // Se falhar ao carregar a logo, continua sem ela
@@ -152,7 +152,7 @@ class PDFGenerator {
                 crossAxisAlignment: pw.CrossAxisAlignment.start,
                 children: [
                   pw.Text(
-                    'AG MERCHANDISING',
+                    'MERCH HUB',
                     style: pw.TextStyle(
                       fontSize: 10,
                       fontWeight: pw.FontWeight.bold,
@@ -892,7 +892,7 @@ class PDFGenerator {
   static Future<void> sharePDF(File pdfFile) async {
     await Share.shareXFiles(
       [XFile(pdfFile.path)],
-      text: 'Relatório de Merchandising - AG Merchandising',
+      text: 'Relatório de Merchandising - Merch Hub',
     );
   }
 }

@@ -4,6 +4,109 @@ import 'api_service.dart';
 
 /// Serviço para gerenciar agenda semanal de marcas
 class ScheduleService {
+  /// Busca os atendimentos programados por dia na semana atual.
+  static Future<Map<String, dynamic>> getWeekSchedule() async {
+    final response = await http.get(
+      Uri.parse('${ApiService.baseUrl}/schedule/week'),
+      headers: ApiService.getHeaders(),
+    );
+    if (response.statusCode == 401) {
+      await ApiService.checkTokenExpired(401);
+      return getWeekSchedule();
+    }
+    if (response.statusCode != 200) {
+      final body = jsonDecode(response.body);
+      throw Exception(body['error'] ?? 'Não foi possível carregar a agenda semanal.');
+    }
+    return jsonDecode(response.body) as Map<String, dynamic>;
+  }
+
+  /// Buscar visão de agenda das marcas (hoje e amanhã)
+  static Future<Map<String, dynamic>> getBrandsScheduleOverview() async {
+    try {
+      final response = await http.get(
+        Uri.parse('${ApiService.baseUrl}/brands/schedule-overview'),
+        headers: ApiService.getHeaders(),
+      );
+
+      if (response.statusCode == 401) {
+        await ApiService.checkTokenExpired(401);
+        return getBrandsScheduleOverview();
+      }
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body) as Map<String, dynamic>;
+        return {
+          'success': data['success'] ?? false,
+          'today': data['today'] ?? DateTime.now().weekday % 7,
+          'tomorrow': data['tomorrow'] ?? ((DateTime.now().weekday % 7) + 1) % 7,
+          'today_name': data['today_name'] ?? _getDayName(DateTime.now().weekday % 7),
+          'tomorrow_name': data['tomorrow_name'] ?? _getDayName(((DateTime.now().weekday % 7) + 1) % 7),
+          'brands': List<Map<String, dynamic>>.from(data['brands'] ?? []),
+        };
+      }
+
+      // Fallback para servidores que ainda não têm a rota de overview.
+      if (response.statusCode == 404) {
+        return _buildFallbackOverview();
+      }
+
+      Map<String, dynamic>? body;
+      try {
+        final decoded = jsonDecode(response.body);
+        if (decoded is Map<String, dynamic>) body = decoded;
+      } catch (_) {}
+      final code = body?['code'];
+      final message = body?['error'] ?? body?['message'];
+      throw Exception(
+        'Erro ao buscar overview da agenda: ${message ?? response.statusCode}'
+        '${code != null ? ' [$code]' : ''}',
+      );
+    } catch (e) {
+      // Se o erro vier da rota nova indisponível, tenta fallback também.
+      final message = e.toString();
+      if (message.contains('404')) {
+        return _buildFallbackOverview();
+      }
+      print('❌ Erro getBrandsScheduleOverview: $e');
+      rethrow;
+    }
+  }
+
+  static Future<Map<String, dynamic>> _buildFallbackOverview() async {
+    final todayResult = await getBrandsToday();
+    final allBrands = await getAllBrands();
+    final todayBrands = List<Map<String, dynamic>>.from(todayResult['brands'] ?? []);
+
+    final todayIds = todayBrands
+        .map((b) => b['id'])
+        .where((id) => id != null)
+        .toSet();
+
+    final merged = allBrands.map((brand) {
+      final id = brand['id'];
+      final scheduledToday = todayIds.contains(id);
+      return {
+        ...brand,
+        // Sem endpoint novo, não temos dados completos de amanhã/loja.
+        'assigned_store_id': null,
+        'can_collect_today': scheduledToday,
+        'scheduled_for_tomorrow': false,
+        'tomorrow_assignment': null,
+        'store_assignments': const [],
+      };
+    }).toList();
+
+    return {
+      'success': true,
+      'today': todayResult['today'] ?? DateTime.now().weekday % 7,
+      'tomorrow': ((todayResult['today'] ?? DateTime.now().weekday % 7) + 1) % 7,
+      'today_name': todayResult['day_name'] ?? _getDayName(DateTime.now().weekday % 7),
+      'tomorrow_name': _getDayName(((todayResult['today'] ?? DateTime.now().weekday % 7) + 1) % 7),
+      'brands': merged,
+    };
+  }
+
   /// Buscar marcas agendadas para o dia de hoje
   static Future<Map<String, dynamic>> getBrandsToday() async {
     try {
@@ -27,7 +130,17 @@ class ScheduleService {
         };
       }
 
-      throw Exception('Erro ao buscar marcas do dia: ${response.statusCode}');
+      Map<String, dynamic>? body;
+      try {
+        final decoded = jsonDecode(response.body);
+        if (decoded is Map<String, dynamic>) body = decoded;
+      } catch (_) {}
+      final code = body?['code'];
+      final message = body?['error'] ?? body?['message'];
+      throw Exception(
+        'Erro ao buscar marcas do dia: ${message ?? response.statusCode}'
+        '${code != null ? ' [$code]' : ''}',
+      );
     } catch (e) {
       print('❌ Erro getBrandsToday: $e');
       rethrow;
@@ -52,7 +165,17 @@ class ScheduleService {
         return List<Map<String, dynamic>>.from(data['data'] ?? []);
       }
 
-      throw Exception('Erro ao buscar marcas: ${response.statusCode}');
+      Map<String, dynamic>? body;
+      try {
+        final decoded = jsonDecode(response.body);
+        if (decoded is Map<String, dynamic>) body = decoded;
+      } catch (_) {}
+      final code = body?['code'];
+      final message = body?['error'] ?? body?['message'];
+      throw Exception(
+        'Erro ao buscar marcas: ${message ?? response.statusCode}'
+        '${code != null ? ' [$code]' : ''}',
+      );
     } catch (e) {
       print('❌ Erro getAllBrands: $e');
       rethrow;

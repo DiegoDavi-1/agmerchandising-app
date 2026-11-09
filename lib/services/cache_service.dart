@@ -5,8 +5,8 @@ class CacheService {
   static const _brandsKey = 'cache_brands';
   static const _brandsMetaKey = 'cache_brands_meta';
 
-  static String _brandFieldsKey(int brandId) => 'cache_brand_fields_$brandId';
-  static String _brandFieldsMetaKey(int brandId) => 'cache_brand_fields_meta_$brandId';
+  static String _brandFieldsKey(int brandId, {int? storeId}) => 'cache_brand_fields_${brandId}_${storeId ?? 0}';
+  static String _brandFieldsMetaKey(int brandId, {int? storeId}) => 'cache_brand_fields_meta_${brandId}_${storeId ?? 0}';
 
   static Future<Map<String, dynamic>?> getCachedBrands() async {
     final prefs = await SharedPreferences.getInstance();
@@ -36,10 +36,10 @@ class CacheService {
     );
   }
 
-  static Future<Map<String, dynamic>?> getCachedBrandFields(int brandId) async {
+  static Future<Map<String, dynamic>?> getCachedBrandFields(int brandId, {int? storeId}) async {
     final prefs = await SharedPreferences.getInstance();
-    final data = prefs.getString(_brandFieldsKey(brandId));
-    final meta = prefs.getString(_brandFieldsMetaKey(brandId));
+    final data = prefs.getString(_brandFieldsKey(brandId, storeId: storeId));
+    final meta = prefs.getString(_brandFieldsMetaKey(brandId, storeId: storeId));
 
     if (data == null || meta == null) return null;
 
@@ -53,11 +53,12 @@ class CacheService {
     required int brandId,
     required List<dynamic> data,
     required String? lastUpdated,
+    int? storeId,
   }) async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_brandFieldsKey(brandId), jsonEncode(data));
+    await prefs.setString(_brandFieldsKey(brandId, storeId: storeId), jsonEncode(data));
     await prefs.setString(
-      _brandFieldsMetaKey(brandId),
+      _brandFieldsMetaKey(brandId, storeId: storeId),
       jsonEncode({
         'last_updated': lastUpdated,
         'cached_at': DateTime.now().toIso8601String(),

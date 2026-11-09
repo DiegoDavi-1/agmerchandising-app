@@ -1,4 +1,4 @@
-package com.example.ag_merchandising
+package com.merchhub.app
 
 import io.flutter.embedding.android.FlutterFragmentActivity
 

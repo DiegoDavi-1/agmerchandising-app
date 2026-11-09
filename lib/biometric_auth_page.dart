@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:local_auth/local_auth.dart';
 import 'services/biometric_service.dart';
 
 class BiometricAuthPage extends StatefulWidget {
@@ -18,12 +19,29 @@ class _BiometricAuthPageState extends State<BiometricAuthPage> {
   final _biometricService = BiometricService();
   bool _isAuthenticating = false;
   String? _errorMessage;
+  String _biometricLabel = 'biometria';
 
   @override
   void initState() {
     super.initState();
+    _loadBiometricLabel();
     // Tentar autenticar automaticamente ao iniciar
     Future.delayed(const Duration(milliseconds: 500), _authenticate);
+  }
+
+  Future<void> _loadBiometricLabel() async {
+    final availableBiometrics = await _biometricService.getAvailableBiometrics();
+    if (!mounted) return;
+
+    setState(() {
+      if (availableBiometrics.contains(BiometricType.face)) {
+        _biometricLabel = 'Face ID';
+      } else if (availableBiometrics.contains(BiometricType.fingerprint) ||
+          availableBiometrics.contains(BiometricType.strong) ||
+          availableBiometrics.contains(BiometricType.weak)) {
+        _biometricLabel = 'Touch ID';
+      }
+    });
   }
 
   Future<void> _authenticate() async {
@@ -71,7 +89,7 @@ class _BiometricAuthPageState extends State<BiometricAuthPage> {
             colors: [
               Colors.black,
               const Color(0xFF1a1a1a),
-              const Color(0xFF2d1b4e),
+              const Color(0xFF0F172A),
             ],
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
@@ -86,7 +104,7 @@ class _BiometricAuthPageState extends State<BiometricAuthPage> {
               Icon(
                 Icons.fingerprint,
                 size: 80,
-                color: const Color(0xFF9C3FE4),
+                color: const Color(0xFF0F766E),
               ),
               const SizedBox(height: 30),
 
@@ -105,7 +123,7 @@ class _BiometricAuthPageState extends State<BiometricAuthPage> {
               Text(
                 _isAuthenticating
                     ? 'Aguarde o reconhecimento...'
-                    : 'Use sua impressão digital para continuar',
+                    : 'Use $_biometricLabel para continuar',
                 style: GoogleFonts.poppins(
                   color: Colors.white70,
                   fontSize: 16,
@@ -119,7 +137,7 @@ class _BiometricAuthPageState extends State<BiometricAuthPage> {
                   width: 60,
                   height: 60,
                   child: CircularProgressIndicator(
-                    color: Color(0xFF9C3FE4),
+                    color: Color(0xFF0F766E),
                     strokeWidth: 3,
                   ),
                 ),
@@ -147,7 +165,7 @@ class _BiometricAuthPageState extends State<BiometricAuthPage> {
                 ElevatedButton(
                   onPressed: _authenticate,
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF9C3FE4),
+                    backgroundColor: const Color(0xFF0F766E),
                     padding: const EdgeInsets.symmetric(
                       horizontal: 40,
                       vertical: 14,

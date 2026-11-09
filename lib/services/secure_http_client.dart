@@ -3,27 +3,27 @@ import 'package:flutter/services.dart' show rootBundle;
 import 'package:http/http.dart' as http;
 import 'package:http/io_client.dart';
 
-/// Certificate Pinning para AG Merchandising API
+/// Certificate Pinning para Merch Hub API
 /// 
 /// Este serviço implementa SSL pinning para prevenir ataques Man-in-the-Middle (MITM)
 /// 
 /// INSTRUÇÕES DE USO:
 /// 1. Obtenha o certificado do servidor:
 ///    ```
-///    openssl s_client -servername agmerchandising.com -connect agmerchandising.com:443 < /dev/null | openssl x509 -outform DER > agmerchandising.der
+///    openssl s_client -servername merchhubapp.com -connect merchhubapp.com:443 < /dev/null | openssl x509 -outform DER > merchhubapp.der
 ///    ```
-/// 2. Coloque o arquivo agmerchandising.der em: assets/certificates/
+/// 2. Coloque o arquivo merchhubapp.der em: assets/certificates/
 /// 3. Adicione no pubspec.yaml:
 ///    ```
 ///    flutter:
 ///      assets:
-///        - assets/certificates/agmerchandising.der
+///        - assets/certificates/merchhubapp.der
 ///    ```
 /// 4. Use este cliente para todas as requisições HTTP
 
 class SecureHttpClient {
   static http.Client? _client;
-  static const String certPath = 'assets/certificates/agmerchandising.der';
+  static const String certPath = 'assets/certificates/merchhubapp.der';
 
   /// Retorna um cliente HTTP com certificate pinning configurado
   static Future<http.Client> getClient() async {
@@ -44,7 +44,7 @@ class SecureHttpClient {
       // Configurar validação customizada do certificado
       httpClient.badCertificateCallback = (X509Certificate cert, String host, int port) {
         // Verificar se o host é o esperado
-        if (host != 'agmerchandising.com') {
+        if (host != 'merchhubapp.com') {
           print('⚠️ Certificate pinning: host inesperado: $host');
           return false;
         }
@@ -90,7 +90,7 @@ class SecureHttpClient {
 /// ```dart
 /// final client = await SecureHttpClient.getClient();
 /// final response = await client.get(
-///   Uri.parse('https://agmerchandising.com/api/health'),
+///   Uri.parse('https://merchhubapp.com/api/health'),
 /// );
 /// ```
 
@@ -98,7 +98,7 @@ class SecureHttpClient {
 /// 
 /// Quando o certificado do servidor for renovado (Let's Encrypt renova a cada 90 dias):
 /// 1. Obtenha o novo certificado usando o comando openssl acima
-/// 2. Substitua o arquivo assets/certificates/agmerchandising.der
+/// 2. Substitua o arquivo assets/certificates/merchhubapp.der
 /// 3. Faça rebuild e republique o app
 /// 
 /// RECOMENDAÇÃO: 

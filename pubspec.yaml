@@ -1,11 +1,14 @@
 name: ag_merchandising
-description: AG Merchandising - App de controle de merchandising
+description: Merch Hub - App de controle de merchandising
+version: 1.0.26+27
 
 environment:
   sdk: ">=3.0.0 <4.0.0"
 
 dependencies:
   flutter:
+    sdk: flutter
+  flutter_localizations:
     sdk: flutter
 
   # UI & Design
@@ -48,17 +51,15 @@ dependencies:
   share_plus: ^11.1.0
   csv: ^6.0.0
   file_picker: ^10.3.8
-  syncfusion_flutter_xlsio: ^32.1.23
 
   # Rede & APIs
   http: ^1.2.0
   http_parser: ^4.1.2
-  googleapis: ^15.0.0
-  googleapis_auth: ^2.0.0
 
   # Notificações & Background
   flutter_local_notifications: ^19.5.0
-  workmanager: ^0.7.0
+  firebase_core: ^4.0.0
+  firebase_messaging: ^16.0.0
 
   # Autenticação
   local_auth: ^3.0.0
@@ -75,6 +76,8 @@ dependencies:
   # Cache (se necessário)
   cached_network_image: ^3.4.0
   flutter_cache_manager: ^3.4.0
+  device_info_plus: ^12.4.0
+  in_app_update: ^4.2.5
 
 dev_dependencies:
   flutter_lints: ^6.0.0
@@ -102,3 +105,5 @@ flutter_launcher_icons:
   ios: true
   remove_alpha_ios: true
   image_path: "assets/images/icon.png"
+  adaptive_icon_background: "#F5F9FC"
+  adaptive_icon_foreground: "assets/images/icon_foreground.png"

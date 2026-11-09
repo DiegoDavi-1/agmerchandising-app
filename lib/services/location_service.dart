@@ -1,103 +1,143 @@
 import 'dart:async';
+import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:geolocator/geolocator.dart';
-import 'package:geocoding/geocoding.dart';
+import 'api_service.dart';
 import '../utils/app_logger.dart';
 
-/// Serviço de rastreamento de localização - PREPARADO PARA SERVIDOR
-/// Status: Desativado - Timer preparado mas não iniciado
 class LocationService {
   static final LocationService _instance = LocationService._internal();
   factory LocationService() => _instance;
   LocationService._internal();
 
-  Timer? _locationTimer;
-  bool _isTracking = false;
+  static const updateInterval = Duration(minutes: 1);
+  final ValueNotifier<String> status =
+      ValueNotifier('Localização compartilhada somente durante o atendimento.');
+  StreamSubscription<Position>? _positions;
+  Timer? _sessionTimer;
+  int? _entryId;
+  int _generation = 0;
+  bool _syncing = false;
+  bool _sending = false;
+  DateTime? _lastAttempt;
 
-  // Configuração
-  static const Duration updateInterval = Duration(minutes: 5);
-  static const bool autoTrackingEnabled = false; // ⚠️ MANTER false ATÉ SERVIDOR ESTAR PRONTO
+  bool get isTracking => _positions != null;
 
-  /// Inicia rastreamento automático de localização
-  void startTracking() {
-    if (!autoTrackingEnabled || _isTracking) return;
-
-    _isTracking = true;
-    
-    // Envia localização imediatamente
-    _sendCurrentLocation();
-
-    // Configura timer para enviar a cada 5 minutos
-    _locationTimer = Timer.periodic(updateInterval, (_) {
-      _sendCurrentLocation();
-    });
-  }
-
-  /// Para rastreamento automático
-  void stopTracking() {
-    _locationTimer?.cancel();
-    _locationTimer = null;
-    _isTracking = false;
-  }
-
-  /// Envia localização atual para o servidor
-  Future<void> _sendCurrentLocation() async {
+  Future<void> synchronize() async {
+    if (_syncing) return;
+    if (!ApiService.isAuthenticated()) {
+      await stopTracking();
+      return;
+    }
+    _syncing = true;
+    final generation = _generation;
     try {
-      // Verifica permissões
-      final permission = await Geolocator.checkPermission();
-      if (permission == LocationPermission.denied || 
-          permission == LocationPermission.deniedForever) {
+      final session = await ApiService.fetchTrackingSession();
+      if (generation != _generation) return;
+      final visit = session['session'] as Map<String, dynamic>?;
+      if (visit == null) {
+        await stopTracking();
         return;
       }
-
-      // Verifica se GPS está ativo
-      final serviceEnabled = await Geolocator.isLocationServiceEnabled();
-      if (!serviceEnabled) return;
-
-      // Obtém posição
-      final position = await Geolocator.getCurrentPosition(
-        desiredAccuracy: LocationAccuracy.high,
-        timeLimit: const Duration(seconds: 10),
-      );
-
-      // Geocodifica
-      String locationText = '';
-      try {
-        final placemarks = await placemarkFromCoordinates(
-          position.latitude,
-          position.longitude,
-        ).timeout(const Duration(seconds: 5));
-
-        if (placemarks.isNotEmpty) {
-          final place = placemarks.first;
-          List<String> parts = [];
-          if (place.street?.isNotEmpty == true) parts.add(place.street!);
-          if (place.subLocality?.isNotEmpty == true) parts.add(place.subLocality!);
-          if (place.locality?.isNotEmpty == true) parts.add(place.locality!);
-          locationText = parts.join(', ');
-        }
-      } catch (e) {
-        locationText = 'Lat: ${position.latitude.toStringAsFixed(6)}, Long: ${position.longitude.toStringAsFixed(6)}';
+      final entryId = (visit['id'] as num).toInt();
+      if (entryId == _entryId && _positions != null) return;
+      await stopTracking();
+      final startGeneration = _generation;
+      if (!await Geolocator.isLocationServiceEnabled()) {
+        throw StateError('Ative o GPS para compartilhar a localização do atendimento.');
       }
-
-      // TODO: Enviar para servidor quando endpoint estiver pronto
-      // await _api.sendLocationUpdate(...)
-
-      AppLogger.info('Localização obtida: $locationText');
-    } catch (e) {
-      AppLogger.error('Erro ao enviar localização', e);
+      final permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied ||
+          permission == LocationPermission.deniedForever) {
+        throw StateError('Permita a localização para compartilhar o ponto no mapa.');
+      }
+      if (startGeneration != _generation || !ApiService.isAuthenticated()) return;
+      _entryId = entryId;
+      _lastAttempt = null;
+      final LocationSettings settings = Platform.isAndroid
+          ? AndroidSettings(
+              accuracy: LocationAccuracy.high,
+              distanceFilter: 0,
+              intervalDuration: updateInterval,
+              foregroundNotificationConfig: const ForegroundNotificationConfig(
+                notificationTitle: 'Merch Hub — atendimento em andamento',
+                notificationText:
+                    'Localização compartilhada a cada minuto até o check-out.',
+                notificationChannelName: 'Localização do atendimento',
+                enableWakeLock: true,
+                setOngoing: true,
+              ),
+            )
+          : const LocationSettings(
+              accuracy: LocationAccuracy.high, distanceFilter: 0);
+      status.value = 'Atendimento em andamento. Aguardando posição GPS.';
+      _positions = Geolocator.getPositionStream(locationSettings: settings)
+          .listen(_sendPosition, onError: (Object error) {
+        AppLogger.error('Erro no GPS do atendimento', error);
+        status.value = 'Falha no GPS. Reabra o app e verifique a localização.';
+        unawaited(_cancelStream());
+      });
+      _sessionTimer = Timer.periodic(updateInterval, (_) => synchronize());
+    } catch (error) {
+      AppLogger.error('Erro ao iniciar rastreamento do atendimento', error);
+      status.value = 'Não foi possível atualizar o rastreamento: $error';
+    } finally {
+      _syncing = false;
     }
   }
 
-  /// Envia localização manualmente (pode ser usado para testes)
-  Future<bool> sendLocationNow() async {
+  Future<void> _sendPosition(Position position) async {
+    final entryId = _entryId;
+    if (entryId == null || _sending) return;
+    final now = DateTime.now();
+    if (_lastAttempt != null &&
+        now.difference(_lastAttempt!) <
+            updateInterval - const Duration(seconds: 1)) {
+      return;
+    }
+    if (position.isMocked ||
+        now.toUtc().difference(position.timestamp.toUtc()).abs() >
+            const Duration(minutes: 2)) {
+      status.value = 'Posição GPS antiga ou simulada. Aguardando uma posição válida.';
+      return;
+    }
+    _sending = true;
+    _lastAttempt = now;
     try {
-      await _sendCurrentLocation();
-      return true;
-    } catch (e) {
-      return false;
+      final result = await ApiService.sendTrackingLocation(
+        clockEntryId: entryId,
+        latitude: position.latitude,
+        longitude: position.longitude,
+        accuracy: position.accuracy,
+        observedAt: position.timestamp,
+        isMockLocation: position.isMocked,
+      );
+      if (result['tracking_stopped'] == true) {
+        await stopTracking();
+      } else if (_entryId == entryId) {
+        status.value = 'Localização compartilhada durante o atendimento, a cada minuto.';
+      }
+    } catch (error) {
+      AppLogger.error('Erro ao enviar localização do atendimento', error);
+      status.value = 'Localização não enviada. Verifique GPS e internet: $error';
+    } finally {
+      _sending = false;
     }
   }
 
-  /// Verifica se o rastreamento está ativo
-  bool get isTracking => _isTracking;
+  Future<void> _cancelStream() async {
+    final subscription = _positions;
+    _positions = null;
+    await subscription?.cancel();
+  }
+
+  Future<void> stopTracking() async {
+    _generation++;
+    _entryId = null;
+    _sessionTimer?.cancel();
+    _sessionTimer = null;
+    _lastAttempt = null;
+    await _cancelStream();
+    status.value = 'Sem atendimento aberto. Rastreamento desligado.';
+  }
 }

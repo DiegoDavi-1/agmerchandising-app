@@ -93,7 +93,7 @@ class _ThemeSettingsPageState extends State<ThemeSettingsPage> {
           'Configurações de Tema',
           style: GoogleFonts.poppins(fontWeight: FontWeight.w700),
         ),
-        backgroundColor: isDark ? const Color(0xFF1A1F2E) : const Color(0xFF1E88E5),
+        backgroundColor: isDark ? const Color(0xFF1A1F2E) : const Color(0xFF0F766E),
         elevation: 0,
       ),
       backgroundColor: isDark ? const Color(0xFF0F1419) : Colors.white,
@@ -307,13 +307,13 @@ class _ThemeOptionCard extends StatelessWidget {
           decoration: BoxDecoration(
             color: isSelected
                 ? (isDark
-                    ? const Color(0xFF1E88E5).withOpacity(0.2)
-                    : const Color(0xFF1E88E5).withOpacity(0.1))
+                    ? const Color(0xFF0F766E).withOpacity(0.2)
+                    : const Color(0xFF0F766E).withOpacity(0.1))
                 : (isDark ? const Color(0xFF1A1F2E) : Colors.grey[100]),
             borderRadius: BorderRadius.circular(12),
             border: Border.all(
               color: isSelected
-                  ? const Color(0xFF1E88E5)
+                  ? const Color(0xFF0F766E)
                   : (isDark ? Colors.grey[700]! : Colors.grey[300]!),
               width: isSelected ? 2 : 1,
             ),
@@ -324,12 +324,12 @@ class _ThemeOptionCard extends StatelessWidget {
                 width: 56,
                 height: 56,
                 decoration: BoxDecoration(
-                  color: const Color(0xFF1E88E5).withOpacity(0.1),
+                  color: const Color(0xFF0F766E).withOpacity(0.1),
                   borderRadius: BorderRadius.circular(12),
                 ),
                 child: Icon(
                   icon,
-                  color: const Color(0xFF1E88E5),
+                  color: const Color(0xFF0F766E),
                   size: 28,
                 ),
               ),
@@ -362,7 +362,7 @@ class _ThemeOptionCard extends StatelessWidget {
                   width: 24,
                   height: 24,
                   decoration: const BoxDecoration(
-                    color: Color(0xFF1E88E5),
+                    color: Color(0xFF0F766E),
                     shape: BoxShape.circle,
                   ),
                   child: const Icon(
