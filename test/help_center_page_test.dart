@@ -27,7 +27,7 @@ void main() {
 
     await tester.tap(find.text('Treinamentos'));
     await tester.pumpAndSettle();
-    expect(find.text('Vídeo em preparação'), findsWidgets);
+    expect(find.text('Assistir no YouTube'), findsWidgets);
     await tester.pageBack();
     await tester.pumpAndSettle();
 
@@ -50,4 +50,59 @@ void main() {
     expect(formatWeekdays([0, 6]), 'Sáb, Dom');
     expect(formatWeekdays([]), '—');
   });
+
+  testWidgets('treinamentos abrem os sete vídeos publicados', (tester) async {
+    final opened = <Uri>[];
+    await tester.pumpWidget(MaterialApp(
+      home: TrainingsPage(openVideo: (uri) async {
+        opened.add(uri);
+        return true;
+      }),
+    ));
+    const titles = [
+      '01 - Primeiros passos no aplicativo e no portal',
+      '02 - Como realizar um atendimento',
+      '03 - Como registrar entrada e saída',
+      '04 - Como enviar fotos e responder auditorias',
+      '05 - Mensagens e orientações da equipe',
+      '06.1 - Minha rota: conferir e solicitar alterações',
+      '06.2 - Fale com a equipe: ajuda, respostas e bugs',
+    ];
+    for (final title in titles) {
+      await tester.scrollUntilVisible(find.text(title), 150);
+      await tester.tap(find.text(title));
+      await tester.pumpAndSettle();
+    }
+    expect(opened.map((uri) => uri.queryParameters['v']).toList(), [
+      'A4QlgutR600',
+      'YoalW_1diYc',
+      'CFMr4b9JWCM',
+      'TByun9txw5E',
+      '4Yy4BmINoPI',
+      'CM8Jsix-aME',
+      'G32NbnndzIs',
+    ]);
+    expect(
+        opened.every(
+            (uri) => uri.scheme == 'https' && uri.host == 'www.youtube.com'),
+        isTrue);
+    expect(find.byIcon(Icons.lock_outline), findsNothing);
+  });
+
+  for (final throwsError in [false, true]) {
+    testWidgets('treinamento informa falha ao abrir: $throwsError',
+        (tester) async {
+      await tester.pumpWidget(MaterialApp(
+        home: TrainingsPage(openVideo: (_) async {
+          if (throwsError) throw StateError('launcher unavailable');
+          return false;
+        }),
+      ));
+      await tester
+          .tap(find.text('01 - Primeiros passos no aplicativo e no portal'));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('Não foi possível abrir o vídeo.'),
+          findsOneWidget);
+    });
+  }
 }

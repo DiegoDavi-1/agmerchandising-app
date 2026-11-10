@@ -2,6 +2,16 @@
 
 Promoter App  Promoter App is a mobile application designed to help managers and teams track, verify, and validate the work of promoters efficiently. It streamlines data collection, reporting, and performance analysis, ensuring high-quality operations across stores and campaigns.
 
+## Treinamentos
+
+Em Suporte > Treinamentos, os sete videos publicados abrem no YouTube ou no
+navegador externo. E necessaria conexao com a internet. A lista inclui
+Mensagens (05), Minha rota (06.1) e Fale com a equipe (06.2), alem dos quatro
+treinamentos iniciais. Falhas ao abrir o link sao informadas na tela.
+
+Para validar a lista e o tratamento de falhas:
+`flutter test --no-pub test/help_center_page_test.dart`.
+
 ## iOS
 
 O projeto ja esta preparado para iOS com bundle id e permissoes nativas configuradas.

@@ -1,6 +1,6 @@
 name: ag_merchandising
 description: Merch Hub - App de controle de merchandising
-version: 1.0.26+27
+version: 1.0.27+28
 
 environment:
   sdk: ">=3.0.0 <4.0.0"

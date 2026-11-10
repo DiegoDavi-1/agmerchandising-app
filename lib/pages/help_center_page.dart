@@ -1,6 +1,7 @@
-﻿import 'package:flutter/foundation.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../services/api_service.dart';
 import 'route_change_request_page.dart';
@@ -114,7 +115,8 @@ class _MySupportMessagesPageState extends State<MySupportMessagesPage> {
   Future<List<dynamic>> _load() async {
     final result = await ApiService.fetchMySupportMessages();
     if (((result['unreadReplies'] as num?) ?? 0) > 0) {
-      ApiService.markSupportRepliesSeen().catchError((_) => <String, dynamic>{});
+      ApiService.markSupportRepliesSeen()
+          .catchError((_) => <String, dynamic>{});
     }
     return (result['data'] as List?) ?? [];
   }
@@ -190,7 +192,8 @@ class _MySupportMessagesPageState extends State<MySupportMessagesPage> {
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                Text('Resposta da equipe · ${_fmt(m['replied_at'])}',
+                                Text(
+                                    'Resposta da equipe · ${_fmt(m['replied_at'])}',
                                     style: const TextStyle(
                                         fontSize: 12,
                                         fontWeight: FontWeight.w600,
@@ -283,16 +286,41 @@ class UserManualPage extends StatelessWidget {
 }
 
 class TrainingsPage extends StatelessWidget {
-  const TrainingsPage({super.key});
+  const TrainingsPage({super.key, this.openVideo = _openExternalVideo});
 
-  static const _titles = [
-    'Primeiros passos no aplicativo',
-    'Como realizar um atendimento',
-    'Como registrar entrada e saída',
-    'Como enviar fotos e responder auditorias',
-    'Como registrar validades',
-    'Como solicitar alteração na rota',
+  final Future<bool> Function(Uri) openVideo;
+
+  static Future<bool> _openExternalVideo(Uri uri) =>
+      launchUrl(uri, mode: LaunchMode.externalApplication);
+
+  static const _videos = [
+    ('01 - Primeiros passos no aplicativo e no portal', 'A4QlgutR600'),
+    ('02 - Como realizar um atendimento', 'YoalW_1diYc'),
+    ('03 - Como registrar entrada e saída', 'CFMr4b9JWCM'),
+    ('04 - Como enviar fotos e responder auditorias', 'TByun9txw5E'),
+    ('05 - Mensagens e orientações da equipe', '4Yy4BmINoPI'),
+    ('06.1 - Minha rota: conferir e solicitar alterações', 'CM8Jsix-aME'),
+    ('06.2 - Fale com a equipe: ajuda, respostas e bugs', 'G32NbnndzIs'),
   ];
+
+  Future<void> _watch(BuildContext context, String videoId) async {
+    try {
+      final opened = await openVideo(
+        Uri.https('www.youtube.com', '/watch', {'v': videoId}),
+      );
+      if (!opened) throw StateError('Não foi possível abrir o YouTube.');
+    } catch (error) {
+      debugPrint('Erro ao abrir treinamento $videoId: $error');
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Não foi possível abrir o vídeo. Confira se há um navegador ou o YouTube instalado e tente novamente.',
+          ),
+        ),
+      );
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -303,16 +331,18 @@ class TrainingsPage extends StatelessWidget {
       body: ListView(
         padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
         children: [
-          Text('Os vídeos serão adicionados aqui assim que forem publicados.',
+          Text(
+              'Toque em um treinamento para assistir no YouTube. É necessária uma conexão com a internet.',
               style: TextStyle(color: muted)),
           const SizedBox(height: 8),
-          for (final title in _titles)
+          for (final (title, videoId) in _videos)
             Card(
               child: ListTile(
                 leading: const Icon(Icons.play_circle_outline, color: _teal),
                 title: Text(title),
-                subtitle: const Text('Vídeo em preparação'),
-                trailing: const Icon(Icons.lock_outline, size: 18),
+                subtitle: const Text('Assistir no YouTube'),
+                trailing: const Icon(Icons.open_in_new, size: 18),
+                onTap: () => _watch(context, videoId),
               ),
             ),
         ],
@@ -472,7 +502,9 @@ class _SupportMessagePageState extends State<SupportMessagePage> {
 PreferredSizeWidget _appBar(BuildContext context, String title) => AppBar(
       title:
           Text(title, style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
-      backgroundColor: Theme.of(context).brightness == Brightness.dark ? const Color(0xFF1A1F2E) : _teal,
+      backgroundColor: Theme.of(context).brightness == Brightness.dark
+          ? const Color(0xFF1A1F2E)
+          : _teal,
       foregroundColor: Colors.white,
     );
 
