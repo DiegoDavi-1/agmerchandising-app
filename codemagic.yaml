@@ -29,3 +29,77 @@ workflows:
       app_store_connect:
         auth: integration
         submit_to_testflight: false
+  ios-smoke:
+    name: iOS Simulator Smoke Test
+    max_build_duration: 60
+    instance_type: mac_mini_m2
+    environment:
+      flutter: 3.38.5
+      xcode: latest
+      cocoapods: default
+      java: 17
+      vars:
+        MAESTRO_CLI_NO_ANALYTICS: "1"
+    scripts:
+      - name: Run Flutter tests
+        script: |
+          set -euo pipefail
+          flutter pub get
+          flutter test --no-pub
+      - name: Prepare iPhone simulator
+        script: |
+          set -euo pipefail
+          mkdir -p build/ios-smoke/screenshots
+          xcrun simctl list devices available --json > build/ios-smoke/devices.json
+          SIMULATOR_UDID=$(python3 - <<'PY'
+          import json
+          with open("build/ios-smoke/devices.json") as source:
+              devices = [d for group in json.load(source)["devices"].values() for d in group]
+          for name in ("iPhone 17 Pro Max", "iPhone 16 Pro Max", "iPhone 16 Plus", "iPhone 15 Pro Max"):
+              matches = [d for d in devices if d["name"] == name]
+              if matches:
+                  print(matches[0]["udid"])
+                  break
+          else:
+              raise SystemExit("No supported iPhone simulator available: " + ", ".join(d["name"] for d in devices))
+          PY
+          )
+          echo "SIMULATOR_UDID=$SIMULATOR_UDID" >> "$CM_ENV"
+          xcrun simctl boot "$SIMULATOR_UDID"
+          xcrun simctl bootstatus "$SIMULATOR_UDID" -b
+          xcrun simctl status_bar "$SIMULATOR_UDID" override --time "9:41" --dataNetwork wifi --wifiMode active --wifiBars 3 --batteryState charged --batteryLevel 100
+      - name: Build and install app for simulator
+        script: |
+          set -euo pipefail
+          flutter build ios --simulator --debug --config-only --no-codesign
+          pod install --project-directory=ios
+          xcodebuild -workspace ios/Runner.xcworkspace -scheme Runner \
+            -configuration Debug -sdk iphonesimulator \
+            -destination "id=$SIMULATOR_UDID" \
+            -derivedDataPath build/ios-smoke/DerivedData \
+            ONLY_ACTIVE_ARCH=YES CODE_SIGNING_ALLOWED=NO build \
+            > build/ios-smoke/xcodebuild.log 2>&1 || {
+              tail -n 100 build/ios-smoke/xcodebuild.log
+              exit 1
+            }
+          xcrun simctl install "$SIMULATOR_UDID" build/ios-smoke/DerivedData/Build/Products/Debug-iphonesimulator/Runner.app
+      - name: Test terms and login on iOS
+        script: |
+          set -euo pipefail
+          if ! command -v maestro >/dev/null 2>&1; then
+            curl -fsSL https://get.maestro.mobile.dev -o "$HOME/install-maestro.sh"
+            bash "$HOME/install-maestro.sh"
+          fi
+          export PATH="$HOME/.maestro/bin:$PATH"
+          maestro --version
+          maestro --device "$SIMULATOR_UDID" test \
+            --format junit --output build/ios-smoke/results.xml \
+            --debug-output build/ios-smoke/maestro .maestro/ios-smoke.yaml
+          xcrun simctl io "$SIMULATOR_UDID" screenshot build/ios-smoke/screenshots/login.png
+          sips -g pixelWidth -g pixelHeight build/ios-smoke/screenshots/login.png
+    artifacts:
+      - build/ios-smoke/screenshots/*.png
+      - build/ios-smoke/results.xml
+      - build/ios-smoke/xcodebuild.log
+      - build/ios-smoke/devices.json
+      - build/ios-smoke/maestro/**/*

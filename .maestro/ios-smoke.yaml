@@ -1,0 +1,27 @@
+appId: com.merchhub.app
+name: iOS terms and empty-login validation
+---
+- launchApp:
+    clearState: true
+    permissions:
+      all: allow
+- assertVisible: "Bem-vindo ao Merch Hub"
+- scrollUntilVisible:
+    element:
+      text: "Li e aceito os Termos de Uso e a Política de Privacidade."
+    direction: DOWN
+- tapOn: "Li e aceito os Termos de Uso e a Política de Privacidade."
+- scrollUntilVisible:
+    element:
+      text: "Continuar"
+    direction: DOWN
+- tapOn: "Continuar"
+- assertVisible: "Entrar"
+- tapOn: "Caso não possua uma conta, solicite a um administrador."
+- tapOn: "Entrar"
+- assertVisible: "Preencha login e senha"
+- extendedWaitUntil:
+    notVisible: "Preencha login e senha"
+    timeout: 10000
+- assertVisible: "Login"
+- assertVisible: "Password"

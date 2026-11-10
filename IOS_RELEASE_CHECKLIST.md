@@ -80,6 +80,11 @@ numero sequencial do Codemagic. Se algum build acima de 27 ja tiver sido
 enviado manualmente ao App Store Connect, ajuste o valor-base em `codemagic.yaml`
 antes da primeira execucao.
 
+Na exportacao, `flutter build ipa` deve receber
+`--export-options-plist="$HOME/export_options.plist"`, gerado por
+`xcode-project use-profiles`. Confirme o artefato IPA e o sucesso do upload;
+somente o archive ou o status de sucesso do workflow nao garantem a exportacao.
+
 Como alternativa, o archive Release para dispositivo foi validado sem
 assinatura; esse archive nao pode ser enviado sem gerar a assinatura/perfil de
 distribuicao no Xcode.
@@ -99,6 +104,23 @@ configurar APNs e validar registro de tokens e capacidades de assinatura.
 - Geracao de PDF
 - Notificacoes locais
 - Fluxo de biometria
+
+Os testes automatizados no Windows nao substituem a validacao dessas funcoes
+em um iPhone. Para a pagina da App Store, usar capturas reais do aplicativo
+iOS, em dispositivo ou simulador, nas dimensoes aceitas pela Apple; nao
+redimensionar capturas Android para apresenta-las como iOS.
+
+Paginas publicas para a ficha do app:
+
+- Privacidade: https://merchhubapp.com/app/politica-de-privacidade/
+- Suporte: https://merchhubapp.com/app/suporte/
+
+O workflow separado `iOS Simulator Smoke Test` executa os testes Flutter e
+abre o app em um simulador iPhone com Maestro local, sem upload para o
+Maestro Cloud. Verifica aceite de termos, exibicao do login e rejeicao de
+campos vazios; salva uma captura nativa em `build/ios-smoke/screenshots/login.png`.
+Nao autentica no servidor nem valida camera, GPS ou biometria. Nao gera IPA
+nem altera o build disponivel no TestFlight.
 
 ## 6) Critrio de aceite
 
