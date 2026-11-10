@@ -24,6 +24,11 @@ void main() {
     }
 
     expect(find.byType(MaterialApp), findsOneWidget);
+    expect(
+      tester.widget<MaterialApp>(find.byType(MaterialApp))
+          .debugShowCheckedModeBanner,
+      isFalse,
+    );
     expect(find.byWidgetPredicate((w) => w is Image), findsWidgets);
     expect(find.widgetWithText(TextFormField, 'Login'), findsOneWidget);
     expect(find.widgetWithText(TextFormField, 'Password'), findsOneWidget);

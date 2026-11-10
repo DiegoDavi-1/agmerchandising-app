@@ -133,6 +133,7 @@ class _MyAppState extends State<MyApp> {
         builder: (context, themeService, _) {
           return MaterialApp(
             navigatorKey: _navigatorKey,
+            debugShowCheckedModeBanner: false,
             title: 'Merch Hub',
             locale: const Locale('pt', 'BR'),
             supportedLocales: const [Locale('pt', 'BR')],
