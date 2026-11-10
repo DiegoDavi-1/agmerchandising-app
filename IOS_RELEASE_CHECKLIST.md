@@ -119,6 +119,9 @@ O workflow separado `iOS Simulator Smoke Test` executa os testes Flutter e
 abre o app em um simulador iPhone com Maestro local, sem upload para o
 Maestro Cloud. Verifica aceite de termos, exibicao do login e rejeicao de
 campos vazios; salva uma captura nativa em `build/ios-smoke/screenshots/login.png`.
+Prioriza simuladores de 6,1 ou 6,3 polegadas e valida a captura em
+1179 x 2556 ou 1206 x 2622 pixels, conforme o grupo obrigatorio indicado
+no Media Manager do App Store Connect. Reavaliar esse grupo antes de cada envio.
 Nao autentica no servidor nem valida camera, GPS ou biometria. Nao gera IPA
 nem altera o build disponivel no TestFlight.
 

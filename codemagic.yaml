@@ -55,7 +55,7 @@ workflows:
           import json
           with open("build/ios-smoke/devices.json") as source:
               devices = [d for group in json.load(source)["devices"].values() for d in group]
-          for name in ("iPhone 17 Pro Max", "iPhone 16 Pro Max", "iPhone 16 Plus", "iPhone 15 Pro Max"):
+          for name in ("iPhone 17 Pro", "iPhone 17", "iPhone 16 Pro", "iPhone 16", "iPhone 15 Pro"):
               matches = [d for d in devices if d["name"] == name]
               if matches:
                   print(matches[0]["udid"])
@@ -98,6 +98,17 @@ workflows:
             --debug-output build/ios-smoke/maestro .maestro/ios-smoke.yaml
           xcrun simctl io "$SIMULATOR_UDID" screenshot build/ios-smoke/screenshots/login.png
           sips -g pixelWidth -g pixelHeight build/ios-smoke/screenshots/login.png
+          python3 - <<'PY'
+          import struct
+          with open("build/ios-smoke/screenshots/login.png", "rb") as source:
+              header = source.read(24)
+          if len(header) != 24 or header[:8] != b"\x89PNG\r\n\x1a\n":
+              raise SystemExit("Simulator screenshot is not a valid PNG")
+          size = struct.unpack(">II", header[16:24])
+          if size not in ((1179, 2556), (1206, 2622)):
+              raise SystemExit(f"Screenshot size {size} does not match the required 6.1/6.3-inch iPhone group")
+          print(f"Required screenshot size verified: {size[0]} x {size[1]}")
+          PY
     artifacts:
       - build/ios-smoke/screenshots/*.png
       - build/ios-smoke/results.xml
