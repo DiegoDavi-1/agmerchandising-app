@@ -18,6 +18,7 @@ import 'services/location_service.dart';
 import 'services/biometric_service.dart';
 import 'core/logging/app_logger_v2.dart';
 import 'widgets/app_update_gate.dart';
+import 'widgets/attendance_recovery_gate.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -157,9 +158,10 @@ class _MyAppState extends State<MyApp> {
                 : ApiService.isAuthenticated()
                     ? (_isBiometricEnabled
                         ? BiometricAuthPage(
-                            nextPage: const RoleHomePage(),
+                            nextPage: const AttendanceRecoveryGate(
+                                child: RoleHomePage()),
                           )
-                        : const RoleHomePage())
+                        : const AttendanceRecoveryGate(child: RoleHomePage()))
                     : UmWidget(),
             routes: {
               '/login': (context) => UmWidget(),

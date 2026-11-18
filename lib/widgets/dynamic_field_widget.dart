@@ -7,6 +7,7 @@ import 'package:permission_handler/permission_handler.dart';
 import '../models/brand_field.dart';
 import '../core/photo_quality.dart';
 import '../services/api_service.dart';
+import '../services/photo_outbox.dart';
 import 'shelf_space_field.dart';
 
 /// Widget que renderiza campos dinamicamente baseado em BrandField
@@ -14,12 +15,18 @@ class DynamicFieldWidget extends StatefulWidget {
   final BrandField field;
   final Function(String fieldName, dynamic value) onValueChanged;
   final dynamic initialValue;
+  final String? brandName;
+  final int? storeId;
+  final Future<void> Function()? persistDraft;
 
   const DynamicFieldWidget({
     super.key,
     required this.field,
     required this.onValueChanged,
     this.initialValue,
+    this.brandName,
+    this.storeId,
+    this.persistDraft,
   });
 
   @override
@@ -32,6 +39,91 @@ class _DynamicFieldWidgetState extends State<DynamicFieldWidget> {
   final ImagePicker _picker = ImagePicker();
   List<String> _photoPaths = [];
   bool _isCapturingPhoto = false;
+  bool get _usesOutbox => PhotoOutbox.isSupported && widget.brandName != null;
+
+  @override
+  void didUpdateWidget(covariant DynamicFieldWidget oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.initialValue == oldWidget.initialValue) return;
+    if (widget.field.fieldType == 'photo') {
+      _currentValue = widget.initialValue;
+      final value = widget.initialValue;
+      _photoPaths = value is List
+          ? List<String>.from(value)
+          : value is String && value.isNotEmpty
+              ? [value]
+              : [];
+    } else if (widget.field.fieldType == 'photo_text') {
+      _currentValue = widget.initialValue;
+      final value = widget.initialValue;
+      final photo = value is Map ? value['photo'] : null;
+      _photoPaths = photo is String && photo.isNotEmpty ? [photo] : [];
+      final text = value is Map ? value['text']?.toString() ?? '' : '';
+      if (_textController.text != text) _textController.text = text;
+    }
+  }
+
+  Future<void> _captureDurablePhoto() async {
+    setState(() => _isCapturingPhoto = true);
+    final outbox = PhotoOutbox.instance;
+    String? id;
+    try {
+      if (!await _requestCameraPermission()) {
+        throw StateError('Permissao de camera negada.');
+      }
+      await widget.persistDraft?.call();
+      id = await outbox.begin(
+        brandId: widget.field.brandId,
+        brandName: widget.brandName!,
+        storeId: widget.storeId,
+        fieldName: widget.field.fieldName,
+        fieldType: widget.field.fieldType,
+        fieldLabel: widget.field.fieldLabel,
+        multiple: widget.field.fieldConfig?.allowMultiple == true,
+      );
+      if (!mounted) return;
+      final captureId = id;
+      final photo = await PhotoQuality.captureChecked(
+          context, _picker, widget.field.fieldLabel,
+          persistCapture: (file) => outbox.persist(captureId, file),
+          persistTimeToken: (token) => outbox.setTimeToken(captureId, token));
+      if (photo == null) {
+        if (mounted) await outbox.cancel(captureId);
+        return;
+      }
+      await outbox.ready(captureId, photo);
+      if (!mounted) return;
+      final multiple = widget.field.fieldType == 'photo' &&
+          widget.field.fieldConfig?.allowMultiple == true;
+      _photoPaths = multiple
+          ? [..._photoPaths.where((path) => path != photo.path), photo.path]
+          : [photo.path];
+      _updateValue(widget.field.fieldType == 'photo_text'
+          ? {'photo': photo.path, 'text': _textController.text}
+          : multiple
+              ? List<String>.of(_photoPaths)
+              : photo.path);
+      await widget.persistDraft?.call();
+      outbox.retry();
+    } catch (error) {
+      debugPrint('Falha na captura persistente ($id): $error');
+      if (id != null) {
+        try {
+          await outbox.cancelIfUncaptured(id);
+        } catch (cleanupError) {
+          debugPrint('Falha ao cancelar captura sem foto: $cleanupError');
+        }
+      }
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Nao foi possivel concluir a foto: $error'),
+          backgroundColor: Colors.red,
+        ));
+      }
+    } finally {
+      if (mounted) setState(() => _isCapturingPhoto = false);
+    }
+  }
 
   @override
   void initState() {
@@ -109,6 +201,31 @@ class _DynamicFieldWidgetState extends State<DynamicFieldWidget> {
     return confirmed == true && mounted;
   }
 
+  Widget _buildRemovePhotoButton(VoidCallback onPressed) {
+    return IconButton(
+      tooltip: 'Remover foto',
+      onPressed: onPressed,
+      constraints: const BoxConstraints.tightFor(width: 48, height: 48),
+      padding: EdgeInsets.zero,
+      iconSize: 24,
+      style: IconButton.styleFrom(
+        foregroundColor: Colors.white,
+        alignment: Alignment.topRight,
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      ),
+      icon: Container(
+        width: 24,
+        height: 24,
+        decoration: BoxDecoration(
+          color: Colors.red.shade700,
+          shape: BoxShape.circle,
+          border: Border.all(color: Colors.white),
+        ),
+        child: const Center(child: Icon(Icons.close, size: 16)),
+      ),
+    );
+  }
+
   void _openPhotoViewer(String path) {
     final isUrl = path.startsWith('http') || path.startsWith('/uploads');
     final url =
@@ -131,6 +248,7 @@ class _DynamicFieldWidgetState extends State<DynamicFieldWidget> {
                   ? Image.network(
                       url,
                       fit: BoxFit.contain,
+                      cacheWidth: 1440,
                       errorBuilder: (_, __, ___) => const Icon(
                           Icons.broken_image,
                           color: Colors.white54,
@@ -139,7 +257,7 @@ class _DynamicFieldWidgetState extends State<DynamicFieldWidget> {
                   : Image.file(
                       File(path),
                       fit: BoxFit.contain,
-                      cacheWidth: 2048,
+                      cacheWidth: 1440,
                       errorBuilder: (_, __, ___) => const Icon(
                           Icons.broken_image,
                           color: Colors.white54,
@@ -272,9 +390,10 @@ class _DynamicFieldWidgetState extends State<DynamicFieldWidget> {
             // Mostrar fotos existentes
             if (_photoPaths.isNotEmpty)
               Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: _photoPaths.map((path) {
+                spacing: 12,
+                runSpacing: 12,
+                children: _photoPaths.asMap().entries.map((entry) {
+                  final path = entry.value;
                   final isUrl =
                       path.startsWith('http') || path.startsWith('/uploads');
                   final imageUrl = isUrl && !path.startsWith('http')
@@ -290,15 +409,15 @@ class _DynamicFieldWidgetState extends State<DynamicFieldWidget> {
                           child: isUrl
                               ? Image.network(
                                   imageUrl,
-                                  width: 80,
-                                  height: 80,
-                                  cacheWidth: 240,
-                                  cacheHeight: 240,
+                                  width: 128,
+                                  height: 128,
+                                  cacheWidth: 384,
+                                  cacheHeight: 384,
                                   fit: BoxFit.cover,
                                   errorBuilder: (context, error, stackTrace) {
                                     return Container(
-                                      width: 80,
-                                      height: 80,
+                                      width: 128,
+                                      height: 128,
                                       decoration: BoxDecoration(
                                         color: Colors.grey[200],
                                         borderRadius: BorderRadius.circular(8),
@@ -310,39 +429,30 @@ class _DynamicFieldWidgetState extends State<DynamicFieldWidget> {
                                 )
                               : Image.file(
                                   File(path),
-                                  width: 80,
-                                  height: 80,
-                                  cacheWidth: 240,
-                                  cacheHeight: 240,
+                                  width: 128,
+                                  height: 128,
+                                  cacheWidth: 384,
+                                  cacheHeight: 384,
                                   fit: BoxFit.cover,
                                 ),
                         ),
                       ),
                       Positioned(
-                        top: -8,
-                        right: -8,
-                        child: GestureDetector(
-                          onTap: () async {
-                            if (!await _confirmRemovePhoto()) return;
-                            setState(() {
-                              _photoPaths.remove(path);
-                              _updateValue(allowMultiple
-                                  ? _photoPaths
-                                  : (_photoPaths.isNotEmpty
-                                      ? _photoPaths.first
-                                      : null));
-                            });
-                          },
-                          child: Container(
-                            decoration: const BoxDecoration(
-                              color: Colors.red,
-                              shape: BoxShape.circle,
-                            ),
-                            padding: const EdgeInsets.all(4),
-                            child: const Icon(Icons.close,
-                                size: 18, color: Colors.white),
-                          ),
-                        ),
+                        top: 0,
+                        right: 0,
+                        child: _buildRemovePhotoButton(() async {
+                          if (!await _confirmRemovePhoto()) return;
+                          if (_usesOutbox) {
+                            await PhotoOutbox.instance.removePhoto(path);
+                          }
+                          _photoPaths = List<String>.of(_photoPaths)
+                            ..removeAt(entry.key);
+                          _updateValue(allowMultiple
+                              ? List<String>.of(_photoPaths)
+                              : (_photoPaths.isNotEmpty
+                                  ? _photoPaths.first
+                                  : null));
+                        }),
                       ),
                     ],
                   );
@@ -359,114 +469,121 @@ class _DynamicFieldWidgetState extends State<DynamicFieldWidget> {
                 child: ElevatedButton.icon(
                   onPressed: _isCapturingPhoto
                       ? null
-                      : () async {
-                          bool dialogOpen = false;
+                      : _usesOutbox
+                          ? _captureDurablePhoto
+                          : () async {
+                              bool dialogOpen = false;
 
-                          if (mounted) {
-                            setState(() {
-                              _isCapturingPhoto = true;
-                            });
-                          }
-
-                          void closeDialog() {
-                            if (dialogOpen && mounted) {
-                              Navigator.of(context, rootNavigator: true).pop();
-                              dialogOpen = false;
-                            }
-                          }
-
-                          try {
-                            // Pedir permissão da câmera
-                            final hasCameraPermission =
-                                await _requestCameraPermission();
-                            if (!hasCameraPermission) {
                               if (mounted) {
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  const SnackBar(
-                                    content: Text('Permissao de camera negada'),
-                                    backgroundColor: Colors.red,
-                                  ),
-                                );
-                              }
-                              return;
-                            }
-
-                            // Tirar foto
-                            final File? checkedPhoto =
-                                await PhotoQuality.captureChecked(
-                                    context, _picker, widget.field.fieldLabel);
-                            if (checkedPhoto != null) {
-                              // Mostrar loading enquanto faz upload
-                              if (mounted) {
-                                dialogOpen = true;
-                                showDialog(
-                                  context: context,
-                                  barrierDismissible: false,
-                                  builder: (context) => const Center(
-                                    child: CircularProgressIndicator(
-                                        color: Colors.white),
-                                  ),
-                                );
-                              }
-
-                              // Fazer upload direto para evitar decodificacao pesada
-                              final imageFile = checkedPhoto;
-                              final uploadResult =
-                                  await ApiService.uploadPhoto(imageFile);
-
-                              closeDialog();
-
-                              if (uploadResult != null &&
-                                  uploadResult['success'] == true) {
-                                final photoUrl =
-                                    uploadResult['photo_url'] as String;
-
                                 setState(() {
-                                  if (allowMultiple) {
-                                    _photoPaths
-                                        .add(photoUrl); // Salva URL do servidor
-                                    _updateValue(_photoPaths);
-                                  } else {
-                                    _photoPaths = [
-                                      photoUrl
-                                    ]; // Salva URL do servidor
-                                    _updateValue(photoUrl);
-                                  }
+                                  _isCapturingPhoto = true;
                                 });
+                              }
+
+                              void closeDialog() {
+                                if (dialogOpen && mounted) {
+                                  Navigator.of(context, rootNavigator: true)
+                                      .pop();
+                                  dialogOpen = false;
+                                }
+                              }
+
+                              try {
+                                // Pedir permissão da câmera
+                                final hasCameraPermission =
+                                    await _requestCameraPermission();
+                                if (!hasCameraPermission) {
+                                  if (mounted) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      const SnackBar(
+                                        content:
+                                            Text('Permissao de camera negada'),
+                                        backgroundColor: Colors.red,
+                                      ),
+                                    );
+                                  }
+                                  return;
+                                }
+
+                                // Tirar foto
+                                final File? checkedPhoto =
+                                    await PhotoQuality.captureChecked(context,
+                                        _picker, widget.field.fieldLabel);
+                                if (checkedPhoto != null) {
+                                  // Mostrar loading enquanto faz upload
+                                  if (mounted) {
+                                    dialogOpen = true;
+                                    showDialog(
+                                      context: context,
+                                      barrierDismissible: false,
+                                      builder: (context) => const Center(
+                                        child: CircularProgressIndicator(
+                                            color: Colors.white),
+                                      ),
+                                    );
+                                  }
+
+                                  // Fazer upload direto para evitar decodificacao pesada
+                                  final imageFile = checkedPhoto;
+                                  final uploadResult =
+                                      await ApiService.uploadPhoto(imageFile,
+                                          requireTimeProof: true);
+
+                                  closeDialog();
+
+                                  if (uploadResult != null &&
+                                      uploadResult['success'] == true) {
+                                    final photoUrl =
+                                        uploadResult['photo_url'] as String;
+
+                                    setState(() {
+                                      if (allowMultiple) {
+                                        _photoPaths.add(
+                                            photoUrl); // Salva URL do servidor
+                                        _updateValue(_photoPaths);
+                                      } else {
+                                        _photoPaths = [
+                                          photoUrl
+                                        ]; // Salva URL do servidor
+                                        _updateValue(photoUrl);
+                                      }
+                                    });
+
+                                    if (mounted) {
+                                      ScaffoldMessenger.of(context)
+                                          .showSnackBar(
+                                        const SnackBar(
+                                          content: Text(
+                                              '✅ Foto enviada com sucesso!'),
+                                          backgroundColor: Colors.green,
+                                          duration: Duration(seconds: 2),
+                                        ),
+                                      );
+                                    }
+                                  } else {
+                                    throw Exception('Falha no upload da foto');
+                                  }
+                                }
+                              } catch (e) {
+                                closeDialog();
 
                                 if (mounted) {
                                   ScaffoldMessenger.of(context).showSnackBar(
-                                    const SnackBar(
+                                    SnackBar(
                                       content:
-                                          Text('✅ Foto enviada com sucesso!'),
-                                      backgroundColor: Colors.green,
-                                      duration: Duration(seconds: 2),
+                                          Text('❌ Erro ao enviar foto: $e'),
+                                      backgroundColor: Colors.red,
                                     ),
                                   );
                                 }
-                              } else {
-                                throw Exception('Falha no upload da foto');
+                              } finally {
+                                if (mounted) {
+                                  setState(() {
+                                    _isCapturingPhoto = false;
+                                  });
+                                }
                               }
-                            }
-                          } catch (e) {
-                            closeDialog();
-
-                            if (mounted) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(
-                                  content: Text('❌ Erro ao enviar foto: $e'),
-                                  backgroundColor: Colors.red,
-                                ),
-                              );
-                            }
-                          } finally {
-                            if (mounted) {
-                              setState(() {
-                                _isCapturingPhoto = false;
-                              });
-                            }
-                          }
-                        },
+                            },
                   icon: _isCapturingPhoto
                       ? const SizedBox(
                           width: 16,
@@ -735,6 +852,8 @@ class _DynamicFieldWidgetState extends State<DynamicFieldWidget> {
                   final imageUrl = rawPath.startsWith('/uploads')
                       ? 'https://merchhubapp.com$rawPath'
                       : rawPath;
+                  final isRemote = rawPath.startsWith('http') ||
+                      rawPath.startsWith('/uploads');
 
                   return Stack(
                     children: [
@@ -742,49 +861,49 @@ class _DynamicFieldWidgetState extends State<DynamicFieldWidget> {
                         onTap: () => _openPhotoViewer(rawPath),
                         child: ClipRRect(
                           borderRadius: BorderRadius.circular(8),
-                          child: Image.network(
-                            imageUrl,
-                            width: double.infinity,
-                            height: 160,
-                            cacheWidth: 800,
-                            cacheHeight: 480,
-                            fit: BoxFit.cover,
-                            errorBuilder: (context, error, stackTrace) {
-                              return Container(
-                                width: double.infinity,
-                                height: 160,
-                                decoration: BoxDecoration(
-                                  color: Colors.grey[200],
-                                  borderRadius: BorderRadius.circular(8),
+                          child: isRemote
+                              ? Image.network(
+                                  imageUrl,
+                                  width: double.infinity,
+                                  height: 160,
+                                  cacheWidth: 800,
+                                  cacheHeight: 480,
+                                  fit: BoxFit.cover,
+                                  errorBuilder: (context, error, stackTrace) {
+                                    return Container(
+                                      width: double.infinity,
+                                      height: 160,
+                                      decoration: BoxDecoration(
+                                        color: Colors.grey[200],
+                                        borderRadius: BorderRadius.circular(8),
+                                      ),
+                                      child: const Icon(Icons.error,
+                                          color: Colors.red),
+                                    );
+                                  },
+                                )
+                              : Image.file(
+                                  File(rawPath),
+                                  width: double.infinity,
+                                  height: 160,
+                                  cacheWidth: 800,
+                                  fit: BoxFit.cover,
+                                  errorBuilder: (_, __, ___) =>
+                                      const Icon(Icons.broken_image),
                                 ),
-                                child:
-                                    const Icon(Icons.error, color: Colors.red),
-                              );
-                            },
-                          ),
                         ),
                       ),
                       Positioned(
-                        top: 8,
-                        right: 8,
-                        child: GestureDetector(
-                          onTap: () async {
-                            if (!await _confirmRemovePhoto()) return;
-                            setState(() {
-                              _photoPaths.clear();
-                              _updateValue(null);
-                            });
-                          },
-                          child: Container(
-                            decoration: const BoxDecoration(
-                              color: Colors.red,
-                              shape: BoxShape.circle,
-                            ),
-                            padding: const EdgeInsets.all(6),
-                            child: const Icon(Icons.close,
-                                size: 16, color: Colors.white),
-                          ),
-                        ),
+                        top: 0,
+                        right: 0,
+                        child: _buildRemovePhotoButton(() async {
+                          if (!await _confirmRemovePhoto()) return;
+                          if (_usesOutbox) {
+                            await PhotoOutbox.instance.removePhoto(rawPath);
+                          }
+                          _photoPaths = [];
+                          _updateValue(null);
+                        }),
                       ),
                     ],
                   );
@@ -800,108 +919,115 @@ class _DynamicFieldWidgetState extends State<DynamicFieldWidget> {
                 child: ElevatedButton.icon(
                   onPressed: _isCapturingPhoto
                       ? null
-                      : () async {
-                          bool dialogOpen = false;
+                      : _usesOutbox
+                          ? _captureDurablePhoto
+                          : () async {
+                              bool dialogOpen = false;
 
-                          if (mounted) {
-                            setState(() {
-                              _isCapturingPhoto = true;
-                            });
-                          }
-
-                          void closeDialog() {
-                            if (dialogOpen && mounted) {
-                              Navigator.of(context, rootNavigator: true).pop();
-                              dialogOpen = false;
-                            }
-                          }
-
-                          try {
-                            final hasCameraPermission =
-                                await _requestCameraPermission();
-                            if (!hasCameraPermission) {
                               if (mounted) {
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  const SnackBar(
-                                    content: Text('Permissao de camera negada'),
-                                    backgroundColor: Colors.red,
-                                  ),
-                                );
-                              }
-                              return;
-                            }
-
-                            final File? checkedPhoto =
-                                await PhotoQuality.captureChecked(
-                                    context, _picker, widget.field.fieldLabel);
-                            if (checkedPhoto != null) {
-                              if (mounted) {
-                                dialogOpen = true;
-                                showDialog(
-                                  context: context,
-                                  barrierDismissible: false,
-                                  builder: (context) => const Center(
-                                    child: CircularProgressIndicator(
-                                        color: Colors.white),
-                                  ),
-                                );
-                              }
-
-                              final imageFile = checkedPhoto;
-                              final uploadResult =
-                                  await ApiService.uploadPhoto(imageFile);
-
-                              closeDialog();
-
-                              if (uploadResult != null &&
-                                  uploadResult['success'] == true) {
-                                final photoUrl =
-                                    uploadResult['photo_url'] as String;
-
                                 setState(() {
-                                  _photoPaths = [photoUrl];
-                                  // Atualizar com Map {photo: url, text: ''}
-                                  _updateValue({
-                                    'photo': photoUrl,
-                                    'text': _textController.text.isEmpty
-                                        ? null
-                                        : _textController.text,
-                                  });
+                                  _isCapturingPhoto = true;
                                 });
+                              }
+
+                              void closeDialog() {
+                                if (dialogOpen && mounted) {
+                                  Navigator.of(context, rootNavigator: true)
+                                      .pop();
+                                  dialogOpen = false;
+                                }
+                              }
+
+                              try {
+                                final hasCameraPermission =
+                                    await _requestCameraPermission();
+                                if (!hasCameraPermission) {
+                                  if (mounted) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      const SnackBar(
+                                        content:
+                                            Text('Permissao de camera negada'),
+                                        backgroundColor: Colors.red,
+                                      ),
+                                    );
+                                  }
+                                  return;
+                                }
+
+                                final File? checkedPhoto =
+                                    await PhotoQuality.captureChecked(context,
+                                        _picker, widget.field.fieldLabel);
+                                if (checkedPhoto != null) {
+                                  if (mounted) {
+                                    dialogOpen = true;
+                                    showDialog(
+                                      context: context,
+                                      barrierDismissible: false,
+                                      builder: (context) => const Center(
+                                        child: CircularProgressIndicator(
+                                            color: Colors.white),
+                                      ),
+                                    );
+                                  }
+
+                                  final imageFile = checkedPhoto;
+                                  final uploadResult =
+                                      await ApiService.uploadPhoto(imageFile,
+                                          requireTimeProof: true);
+
+                                  closeDialog();
+
+                                  if (uploadResult != null &&
+                                      uploadResult['success'] == true) {
+                                    final photoUrl =
+                                        uploadResult['photo_url'] as String;
+
+                                    setState(() {
+                                      _photoPaths = [photoUrl];
+                                      // Atualizar com Map {photo: url, text: ''}
+                                      _updateValue({
+                                        'photo': photoUrl,
+                                        'text': _textController.text.isEmpty
+                                            ? null
+                                            : _textController.text,
+                                      });
+                                    });
+
+                                    if (mounted) {
+                                      ScaffoldMessenger.of(context)
+                                          .showSnackBar(
+                                        const SnackBar(
+                                          content: Text(
+                                              '✅ Foto enviada com sucesso!'),
+                                          backgroundColor: Colors.green,
+                                          duration: Duration(seconds: 2),
+                                        ),
+                                      );
+                                    }
+                                  } else {
+                                    throw Exception('Falha no upload da foto');
+                                  }
+                                }
+                              } catch (e) {
+                                closeDialog();
 
                                 if (mounted) {
                                   ScaffoldMessenger.of(context).showSnackBar(
-                                    const SnackBar(
+                                    SnackBar(
                                       content:
-                                          Text('✅ Foto enviada com sucesso!'),
-                                      backgroundColor: Colors.green,
-                                      duration: Duration(seconds: 2),
+                                          Text('❌ Erro ao enviar foto: $e'),
+                                      backgroundColor: Colors.red,
                                     ),
                                   );
                                 }
-                              } else {
-                                throw Exception('Falha no upload da foto');
+                              } finally {
+                                if (mounted) {
+                                  setState(() {
+                                    _isCapturingPhoto = false;
+                                  });
+                                }
                               }
-                            }
-                          } catch (e) {
-                            closeDialog();
-
-                            if (mounted) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(
-                                  content: Text('❌ Erro ao enviar foto: $e'),
-                                  backgroundColor: Colors.red,
-                                ),
-                              );
-                            }
-                          } finally {
-                            if (mounted) {
-                              setState(() {
-                                _isCapturingPhoto = false;
-                              });
-                            }
-                          }
-                        },
+                            },
                   icon: _isCapturingPhoto
                       ? const SizedBox(
                           width: 16,

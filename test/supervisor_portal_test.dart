@@ -132,16 +132,16 @@ void main() {
       ),
     ));
 
-    expect(find.text('2 novas mensagens da gestão'),
+    expect(find.text('2 novas mensagens da gestão'), findsOneWidget);
+    expect(find.text('Toque para responder perguntas ou ver avisos'),
         findsOneWidget);
-    expect(find.text('Toque para responder perguntas ou ver avisos'), findsOneWidget);
     await tester.tap(find.byType(PromoterMessageNotice));
     expect(opened, isTrue);
   });
 
-  testWidgets('inbox GET does not mark read; explicit action POSTs and reloads',
+  testWidgets('visible messages display and confirm without a tap or reload',
       (tester) async {
-    var unreadCount = 1;
+    final pendingRead = Completer<Map<String, dynamic>>();
     var reads = 0;
     var fetches = 0;
     await tester.pumpWidget(MaterialApp(
@@ -152,22 +152,28 @@ void main() {
             fetches++;
             return {
               'success': true,
-              'unreadCount': unreadCount,
+              'unreadCount': 2,
               'data': [
                 {
                   'id': 42,
                   'type': 'request',
-                  'message': 'Conferir exposição',
-                  'readAt': unreadCount == 0 ? '2026-09-28T17:00:00Z' : null,
+                  'message':
+                      'Conferir exposição\n${List.filled(50, 'Detalhe').join('\n')}',
+                  'replies': [],
+                },
+                {
+                  'id': 43,
+                  'type': 'notice',
+                  'message': 'Segundo aviso',
                   'replies': [],
                 },
               ],
             };
           },
           markPromoterMessageRead: (id) async {
-            expect(id, 42);
             reads++;
-            unreadCount = 0;
+            if (id == 42) return pendingRead.future;
+            expect(id, 43);
             return {'success': true};
           },
         ),
@@ -175,20 +181,34 @@ void main() {
     ));
     await tester.pumpAndSettle();
     expect(fetches, 1);
-    expect(reads, 0);
-    expect(find.text('Você tem 1 mensagem(ns) não lida(s)'), findsOneWidget);
-    expect(find.text('Nova'), findsOneWidget);
-    await tester.tap(find.text('Lida'));
+    expect(reads, 1);
+    expect(find.text('Você tem 2 mensagem(ns) não lida(s)'), findsOneWidget);
+    final visibleMessage = find.textContaining('Conferir exposição');
+    expect(visibleMessage, findsOneWidget);
+    expect(tester.getTopLeft(visibleMessage).dy,
+        lessThan(tester.getBottomLeft(find.byType(ListView)).dy));
+    expect(find.text('Abrir mensagem'), findsNothing);
+    await tester.drag(find.byType(ListView), const Offset(0, -70));
+    await tester.drag(find.byType(ListView), const Offset(0, 100));
     await tester.pumpAndSettle();
     expect(reads, 1);
-    expect(fetches, 2);
-    expect(find.textContaining('mensagem(ns) não lida(s)'), findsNothing);
+    pendingRead.complete({'success': true});
+    await tester.pumpAndSettle();
+    expect(fetches, 1);
+    expect(find.text('Você tem 1 mensagem(ns) não lida(s)'), findsOneWidget);
+    expect(find.text('Segundo aviso').hitTestable(), findsNothing);
     expect(find.text('Lida'), findsNothing);
-    expect(find.text('Responder Pergunta'), findsOneWidget);
+    expect(find.text('Responder Pergunta').hitTestable(), findsNothing);
+    await tester.drag(find.byType(ListView), const Offset(0, -900));
+    await tester.pumpAndSettle();
+    expect(reads, 2);
+    expect(find.text('Segundo aviso').hitTestable(), findsOneWidget);
+    expect(find.textContaining('mensagem(ns) não lida(s)'), findsNothing);
   });
 
-  testWidgets('failed read keeps message unread and surfaces error',
+  testWidgets('failed read stays unread and retries on returning to view',
       (tester) async {
+    var attempts = 0;
     await tester.pumpWidget(MaterialApp(
       home: Scaffold(
         body: PortalMessages(
@@ -200,22 +220,30 @@ void main() {
               {
                 'id': 7,
                 'type': 'notice',
-                'message': 'Aviso',
+                'message': 'Aviso\n${List.filled(50, 'Detalhe').join('\n')}',
                 'readAt': null,
                 'replies': [],
               },
             ],
           },
-          markPromoterMessageRead: (id) async => throw Exception('offline'),
+          markPromoterMessageRead: (id) async {
+            if (++attempts == 1) throw Exception('offline');
+            return {'success': true};
+          },
         ),
       ),
     ));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Lida'));
-    await tester.pumpAndSettle();
     expect(find.text('Você tem 1 mensagem(ns) não lida(s)'), findsOneWidget);
-    expect(find.text('Lida'), findsOneWidget);
-    expect(find.textContaining('Não foi possível marcar como lida'),
+    expect(find.text('Nova'), findsOneWidget);
+    expect(find.textContaining('Não foi possível registrar a leitura'),
         findsOneWidget);
+    await tester.drag(find.byType(ListView), const Offset(0, -220));
+    await tester.pumpAndSettle();
+    expect(attempts, 1);
+    await tester.drag(find.byType(ListView), const Offset(0, 260));
+    await tester.pumpAndSettle();
+    expect(attempts, 2);
+    expect(find.text('Nova'), findsNothing);
   });
 }

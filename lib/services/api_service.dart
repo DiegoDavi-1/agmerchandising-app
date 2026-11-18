@@ -1,6 +1,9 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
+import 'package:flutter/foundation.dart';
+import 'package:crypto/crypto.dart';
 import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -8,12 +11,15 @@ import '../core/network/connectivity_service.dart';
 import '../core/photo_quality.dart';
 import 'cache_service.dart';
 import 'collection_queue_storage.dart';
+import 'photo_capture_time.dart';
+import 'offline_clock.dart';
 
 /// Serviço de comunicação com servidor Express.js
 class ApiService {
   // URL do servidor - Produção VPS (HTTPS com domínio)
   static const String baseUrl = 'https://merchhubapp.com/api';
   static const Duration _requestTimeout = Duration(seconds: 25);
+  static const Duration _photoUploadTimeout = Duration(seconds: 90);
 
   static String? resolvePhotoUrl(String? url) {
     if (url == null || url.isEmpty) return null;
@@ -35,7 +41,11 @@ class ApiService {
   static Future<void> init() async {
     _token = await _storage.read(key: 'auth_token');
     _refreshToken = await _storage.read(key: 'refresh_token');
+    unawaited(synchronizeClock());
   }
+
+  static Future<void> synchronizeClock() =>
+      OfflineClock.synchronize(baseUrl, _token);
 
   // Registrar callback para token expirado
   static void setOnTokenExpired(Function() callback) {
@@ -64,6 +74,7 @@ class ApiService {
           await _storage.write(key: 'auth_token', value: _token);
           await _storage.write(key: 'refresh_token', value: _refreshToken);
 
+          await synchronizeClock();
           await onAuthReady?.call();
           return data;
         }
@@ -103,6 +114,7 @@ class ApiService {
           await _storage.write(key: 'auth_token', value: _token);
           await _storage.write(key: 'refresh_token', value: _refreshToken);
 
+          unawaited(synchronizeClock());
           await onAuthReady?.call();
           return true;
         }
@@ -383,38 +395,93 @@ class ApiService {
     }
   }
 
+  /// Busca a agenda sem tratar falha de conexao como ausencia de atendimentos.
+  static Future<Map<String, dynamic>> getWeekSchedule() async {
+    try {
+      Future<http.Response> send() => _requestWithRetry(
+            () => http.get(Uri.parse('$baseUrl/schedule/week'),
+                headers: _getHeaders()),
+            retryConnectionErrors: true,
+          );
+      var response = await send();
+      if (response.statusCode == 401) {
+        await _checkTokenExpired(401);
+        if (_token != null) response = await send();
+      }
+      final body = jsonDecode(response.body) as Map<String, dynamic>;
+      if (response.statusCode != 200) {
+        throw Exception(
+            body['error'] ?? 'Não foi possível carregar a agenda semanal.');
+      }
+      return body;
+    } catch (error) {
+      if (_isConnectionError(error)) {
+        throw Exception(
+            'Não foi possível carregar sua agenda por falha de conexão. '
+            'Verifique sua internet e toque em Tentar novamente.');
+      }
+      rethrow;
+    }
+  }
+
   // ===== HELPERS =====
   static bool _shouldRetry(int statusCode) {
     return statusCode == 429 || (statusCode >= 500 && statusCode < 600);
   }
+
+  static bool _isConnectionError(Object error) =>
+      error is http.ClientException ||
+      error is SocketException ||
+      error is TimeoutException;
 
   static Future<http.Response> _requestWithRetry(
     Future<http.Response> Function() request, {
     int maxRetries = 3,
     Duration baseDelay = const Duration(milliseconds: 500),
     Duration timeout = _requestTimeout,
+    bool retryConnectionErrors = false,
   }) async {
-    http.Response response = await request().timeout(timeout);
-
-    for (int attempt = 0;
-        attempt < maxRetries && _shouldRetry(response.statusCode);
-        attempt++) {
+    for (int attempt = 0;; attempt++) {
+      try {
+        final response = await request().timeout(timeout);
+        if (attempt >= maxRetries || !_shouldRetry(response.statusCode)) {
+          return response;
+        }
+      } catch (error) {
+        if (!retryConnectionErrors ||
+            !_isConnectionError(error) ||
+            attempt >= maxRetries) {
+          rethrow;
+        }
+      }
       final jitter = Random().nextInt(250);
       final delay = Duration(
           milliseconds: baseDelay.inMilliseconds * (2 << attempt) + jitter);
       await Future.delayed(delay);
-      response = await request().timeout(timeout);
     }
-
-    return response;
   }
 
-  static Future<http.Response> _sendMultipartWithRetry(
-    Future<http.Response> Function() sendRequest, {
+  @visibleForTesting
+  static Future<http.Response> sendMultipartWithRetry(
+    Future<http.MultipartRequest> Function() buildRequest, {
     int maxRetries = 3,
-    Duration timeout = _requestTimeout,
+    Duration timeout = _photoUploadTimeout,
+    http.Client Function()? clientFactory,
   }) async {
-    http.Response response = await sendRequest().timeout(timeout);
+    Future<http.Response> send() async {
+      final client = (clientFactory ?? http.Client.new)();
+      try {
+        return await (() async {
+          final request = await buildRequest();
+          return http.Response.fromStream(await client.send(request));
+        })()
+            .timeout(timeout);
+      } finally {
+        client.close();
+      }
+    }
+
+    http.Response response = await send();
 
     for (int attempt = 0;
         attempt < maxRetries && _shouldRetry(response.statusCode);
@@ -422,7 +489,7 @@ class ApiService {
       final jitter = Random().nextInt(250);
       final delay = Duration(milliseconds: 500 * (2 << attempt) + jitter);
       await Future.delayed(delay);
-      response = await sendRequest().timeout(timeout);
+      response = await send();
     }
 
     return response;
@@ -436,34 +503,41 @@ class ApiService {
         lower.contains(':\\');
   }
 
-  static Future<String> _uploadIfLocal(String path) async {
+  static Future<String> _uploadIfLocal(String path,
+      {int? expectedUserId}) async {
     if (!_isLocalPath(path)) return path;
-    try {
-      final file = File(path.replaceFirst('file://', ''));
-      final result = await uploadPhoto(file);
-      if (result != null && result['success'] == true) {
-        return result['photo_url'] as String;
-      }
-      return path;
-    } catch (_) {
-      return path;
+    final file = File(path.replaceFirst('file://', ''));
+    final digest = await sha256.bind(file.openRead()).first;
+    final result = await uploadPhoto(file,
+        captureId: digest.toString().substring(0, 32),
+        expectedUserId: expectedUserId);
+    if (result != null &&
+        result['success'] == true &&
+        result['photo_url'] is String) {
+      return result['photo_url'] as String;
     }
+    throw StateError('A foto permanece no aparelho: envio nao confirmado.');
   }
 
   static Future<Map<String, dynamic>> normalizeCollectionItem(
       Map<String, dynamic> item) async {
     if (!item.containsKey('data')) return item;
     final data = Map<String, dynamic>.from(item['data'] as Map);
+    final owner = int.tryParse('${item['_queue_user_id']}');
+    if (owner != null && OfflineClock.userId(_token) != owner) {
+      throw StateError(
+          'A conta mudou. Atendimento preservado na fila original.');
+    }
 
     for (final entry in data.entries.toList()) {
       final value = entry.value;
       if (value is String) {
-        data[entry.key] = await _uploadIfLocal(value);
+        data[entry.key] = await _uploadIfLocal(value, expectedUserId: owner);
       } else if (value is List) {
         final updated = <dynamic>[];
         for (final v in value) {
           if (v is String) {
-            updated.add(await _uploadIfLocal(v));
+            updated.add(await _uploadIfLocal(v, expectedUserId: owner));
           } else {
             updated.add(v);
           }
@@ -473,7 +547,7 @@ class ApiService {
         final updated = Map<String, dynamic>.from(value);
         final photo = updated['photo'];
         if (photo is String) {
-          updated['photo'] = await _uploadIfLocal(photo);
+          updated['photo'] = await _uploadIfLocal(photo, expectedUserId: owner);
         }
         data[entry.key] = updated;
       }
@@ -504,7 +578,7 @@ class ApiService {
 
   /// Construir headers com autenticação
   static Map<String, String> _getHeaders() {
-    final headers = {'Content-Type': 'application/json'};
+    final headers = {'Content-Type': 'application/json', 'X-Client': 'app'};
     if (_token != null) {
       headers['Authorization'] = 'Bearer $_token';
     }
@@ -608,6 +682,10 @@ class ApiService {
   }
 
   /// Salvar coleta de dados de uma marca (retry limitado)
+  static String createSubmissionId() => List.generate(16,
+          (_) => Random.secure().nextInt(256).toRadixString(16).padLeft(2, '0'))
+      .join();
+
   static Future<Map<String, dynamic>> saveCollection({
     required int brandId,
     required Map<String, dynamic> collectedData,
@@ -617,7 +695,13 @@ class ApiService {
     double? longitude,
     String? locationAddress,
     bool requiresVisitClock = false,
+    Map<String, dynamic>? eventTime,
+    List<String> photoJobIds = const [],
+    String? submissionId,
   }) async {
+    final capturedTime = eventTime ?? await OfflineClock.capture(_token);
+    final owner = OfflineClock.userId(_token);
+    final requestId = submissionId ?? createSubmissionId();
     final body = {
       'brand_id': brandId,
       'brandName': brandName,
@@ -626,7 +710,10 @@ class ApiService {
       'latitude': latitude,
       'longitude': longitude,
       'location_address': locationAddress,
-      'collected_at': DateTime.now().toIso8601String(),
+      'event_time': capturedTime,
+      '_queue_user_id': owner,
+      '_photo_job_ids': photoJobIds,
+      'client_submission_id': requestId,
     };
 
     try {
@@ -640,6 +727,10 @@ class ApiService {
           };
         }
         // Sem internet: salva na fila local para sincronizar depois
+        if (owner == null) {
+          throw StateError(
+              'Conta nao identificada. O atendimento permanece no rascunho.');
+        }
         await CollectionQueueStorage.enqueue(body);
         return {'success': true, 'offline': true};
       }
@@ -660,10 +751,15 @@ class ApiService {
         return saveCollection(
           brandId: brandId,
           collectedData: collectedData,
+          brandName: brandName,
           storeId: storeId,
           latitude: latitude,
           longitude: longitude,
           locationAddress: locationAddress,
+          requiresVisitClock: requiresVisitClock,
+          eventTime: capturedTime,
+          photoJobIds: photoJobIds,
+          submissionId: requestId,
         );
       }
 
@@ -689,7 +785,12 @@ class ApiService {
       };
     } catch (e) {
       print('❌ Erro saveCollection: $e');
-      return {'success': false, 'error': e.toString()};
+      return {
+        'success': false,
+        'error': _isConnectionError(e)
+            ? 'Nao foi possivel confirmar o envio. Seus dados continuam salvos. Tente enviar novamente.'
+            : e.toString(),
+      };
     }
   }
 
@@ -698,11 +799,18 @@ class ApiService {
     List<Map<String, dynamic>> items,
   ) async {
     try {
-      final response = await _requestWithRetry(() => http.post(
-            Uri.parse('$baseUrl/collections/batch'),
-            headers: _getHeaders(),
-            body: jsonEncode({'items': items}),
-          ));
+      final response = await _requestWithRetry(() {
+        if (items.any((item) =>
+            int.tryParse('${item['_queue_user_id']}') !=
+            OfflineClock.userId(_token))) {
+          throw StateError('A conta mudou durante a sincronizacao.');
+        }
+        return http.post(
+          Uri.parse('$baseUrl/collections/batch'),
+          headers: _getHeaders(),
+          body: jsonEncode({'items': items}),
+        );
+      });
 
       if (response.statusCode == 401) {
         await _checkTokenExpired(401);
@@ -721,9 +829,12 @@ class ApiService {
   }
 
   /// Upload de foto para o servidor
-  static Future<Map<String, dynamic>?> uploadPhoto(File imageFile) async {
+  static Future<Map<String, dynamic>?> uploadPhoto(File imageFile,
+      {String? captureId,
+      int? expectedUserId,
+      bool requireTimeProof = false}) async {
     try {
-      final response = await _sendMultipartWithRetry(() async {
+      final response = await sendMultipartWithRetry(() async {
         final uri = Uri.parse('$baseUrl/upload/photo');
         final request = http.MultipartRequest('POST', uri);
 
@@ -732,17 +843,35 @@ class ApiService {
         }
 
         request.headers.addAll(await PhotoQuality.deviceHeaders());
+        if (captureId != null) {
+          request.headers['X-Photo-Capture-Id'] = captureId;
+        }
+        if (expectedUserId != null) {
+          request.headers['X-Photo-Owner-Id'] = '$expectedUserId';
+        }
+        final proof = PhotoCaptureTime.proofFile(imageFile);
+        if (await proof.exists()) {
+          final stored = await proof.readAsString();
+          request.headers[stored.startsWith('{')
+              ? 'X-Photo-Capture-Time'
+              : 'X-Photo-Time-Proof'] = stored;
+        } else if (requireTimeProof) {
+          throw StateError(
+              'Comprovante de horário da foto ausente. Verifique a captura antes de enviar.');
+        }
         request.files.add(
           await http.MultipartFile.fromPath('photo', imageFile.path),
         );
 
-        final streamedResponse = await request.send();
-        return http.Response.fromStream(streamedResponse);
+        return request;
       });
 
       if (response.statusCode == 401) {
         await _checkTokenExpired(401);
-        return uploadPhoto(imageFile);
+        return uploadPhoto(imageFile,
+            captureId: captureId,
+            expectedUserId: expectedUserId,
+            requireTimeProof: requireTimeProof);
       }
 
       if (response.statusCode == 200) {
@@ -760,7 +889,7 @@ class ApiService {
   static Future<Map<String, dynamic>?> uploadPhotos(
       List<File> imageFiles) async {
     try {
-      final response = await _sendMultipartWithRetry(() async {
+      final response = await sendMultipartWithRetry(() async {
         final uri = Uri.parse('$baseUrl/upload/photos');
         final request = http.MultipartRequest('POST', uri);
 
@@ -775,8 +904,7 @@ class ApiService {
           );
         }
 
-        final streamedResponse = await request.send();
-        return http.Response.fromStream(streamedResponse);
+        return request;
       });
 
       if (response.statusCode == 401) {
@@ -1043,8 +1171,10 @@ class ApiService {
           'brand_id': brandId.toString(),
         },
       );
-      final response =
-          await _requestWithRetry(() => http.get(uri, headers: _getHeaders()));
+      final response = await _requestWithRetry(
+        () => http.get(uri, headers: _getHeaders()),
+        retryConnectionErrors: true,
+      );
       await _checkTokenExpired(response.statusCode);
       if (response.statusCode == 200) {
         return jsonDecode(response.body) as Map<String, dynamic>;
@@ -1055,7 +1185,13 @@ class ApiService {
         'error': body['error'] ?? 'Não foi possível verificar a visita.',
       };
     } catch (e) {
-      return {'success': false, 'error': e.toString()};
+      return {
+        'success': false,
+        'error': _isConnectionError(e)
+            ? 'Não foi possível verificar a visita por falha de conexão. '
+                'Verifique sua internet e toque em Tentar Novamente.'
+            : e.toString(),
+      };
     }
   }
 
@@ -1152,7 +1288,7 @@ class ApiService {
     int? storeId,
   }) async {
     try {
-      final response = await _sendMultipartWithRetry(() async {
+      final response = await sendMultipartWithRetry(() async {
         final uri = Uri.parse('$baseUrl/clock');
         final request = http.MultipartRequest('POST', uri);
         if (_token != null) {
@@ -1171,9 +1307,8 @@ class ApiService {
           request.files
               .add(await http.MultipartFile.fromPath('photo', photoFile.path));
         }
-        final streamed = await request.send();
-        return http.Response.fromStream(streamed);
-      });
+        return request;
+      }, timeout: _requestTimeout);
 
       await _checkTokenExpired(response.statusCode);
 
@@ -1316,10 +1451,11 @@ class ApiService {
 
   static Future<Map<String, dynamic>> requestNonVisitReschedule(
           int nonVisitId, DateTime date) =>
-      _portalRequest('non-visits/$nonVisitId/reschedule',
-          body: {'date': '${date.year}-'
-              '${date.month.toString().padLeft(2, '0')}-'
-              '${date.day.toString().padLeft(2, '0')}'});
+      _portalRequest('non-visits/$nonVisitId/reschedule', body: {
+        'date': '${date.year}-'
+            '${date.month.toString().padLeft(2, '0')}-'
+            '${date.day.toString().padLeft(2, '0')}'
+      });
 
   static Future<Map<String, dynamic>> sendSupportMessage({
     required String category,

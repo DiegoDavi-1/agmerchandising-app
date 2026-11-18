@@ -5,21 +5,8 @@ import 'api_service.dart';
 /// Serviço para gerenciar agenda semanal de marcas
 class ScheduleService {
   /// Busca os atendimentos programados por dia na semana atual.
-  static Future<Map<String, dynamic>> getWeekSchedule() async {
-    final response = await http.get(
-      Uri.parse('${ApiService.baseUrl}/schedule/week'),
-      headers: ApiService.getHeaders(),
-    );
-    if (response.statusCode == 401) {
-      await ApiService.checkTokenExpired(401);
-      return getWeekSchedule();
-    }
-    if (response.statusCode != 200) {
-      final body = jsonDecode(response.body);
-      throw Exception(body['error'] ?? 'Não foi possível carregar a agenda semanal.');
-    }
-    return jsonDecode(response.body) as Map<String, dynamic>;
-  }
+  static Future<Map<String, dynamic>> getWeekSchedule() =>
+      ApiService.getWeekSchedule();
 
   /// Buscar visão de agenda das marcas (hoje e amanhã)
   static Future<Map<String, dynamic>> getBrandsScheduleOverview() async {

@@ -4,9 +4,12 @@ import 'dart:math' as math;
 import 'package:device_info_plus/device_info_plus.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:image/image.dart' as img;
 import 'package:image_picker/image_picker.dart';
 
+import '../services/photo_capture_time.dart';
+import 'logging/app_logger_v2.dart';
 import 'photo_standard.dart';
 
 /// Checagem de qualidade logo apos a foto. Mesmas regras do PWA, da pagina por link,
@@ -60,7 +63,8 @@ class PhotoQuality {
     if (RegExp(r'validade|lote|vencimento').hasMatch(text)) {
       return 'Bem de perto, com boa luz, até a data ficar legível.';
     }
-    if (RegExp(r'gondola|exposic|antes|depois|ponta|ilha|prateleira|planograma|display|check ?stand')
+    if (RegExp(
+            r'gondola|exposic|antes|depois|ponta|ilha|prateleira|planograma|display|check ?stand')
         .hasMatch(text)) {
       return 'Fique de frente para a gôndola e pegue ela inteira. Sem zoom e sem flash em plástico.';
     }
@@ -97,7 +101,8 @@ class PhotoQuality {
       final lines = horizontal ? height : width;
       final len = horizontal ? width : height;
       if (len < 6 || lines < 1) continue;
-      double at(int l, int i) => horizontal ? gray[l * width + i] : gray[i * width + l];
+      double at(int l, int i) =>
+          horizontal ? gray[l * width + i] : gray[i * width + l];
       final count = lines * (len - 1);
       final d0 = Float64List(count);
       final d1 = Float64List(count);
@@ -131,7 +136,8 @@ class PhotoQuality {
 
   /// Regras a partir da imagem cinza ja reduzida para [analysisSide].
   /// [width]/[height] sao da foto original.
-  static List<String> issuesForGray(Float64List gray, int w, int h, int width, int height) {
+  static List<String> issuesForGray(
+      Float64List gray, int w, int h, int width, int height) {
     var sum = 0.0;
     var dark = 0;
     var glare = 0;
@@ -146,7 +152,8 @@ class PhotoQuality {
     for (var y = 1; y < h - 1; y++) {
       for (var x = 1; x < w - 1; x++) {
         final i = y * w + x;
-        final lap = gray[i - 1] + gray[i + 1] + gray[i - w] + gray[i + w] - 4 * gray[i];
+        final lap =
+            gray[i - 1] + gray[i + 1] + gray[i - w] + gray[i + w] - 4 * gray[i];
         lapSum += lap;
         lapSq += lap * lap;
         n++;
@@ -157,7 +164,8 @@ class PhotoQuality {
     final half = blockAverage(gray, w, h, 2);
     final quarter = blockAverage(gray, w, h, 4);
     final edgeRatio = edgeBlurRatio(half.gray, half.width, half.height);
-    final edgeRatioCoarse = edgeBlurRatio(quarter.gray, quarter.width, quarter.height);
+    final edgeRatioCoarse =
+        edgeBlurRatio(quarter.gray, quarter.width, quarter.height);
     final total = gray.length;
     final brightness = total > 0 ? sum / total : 0.0;
     final issues = <String>[];
@@ -166,8 +174,10 @@ class PhotoQuality {
         edgeRatioCoarse >= maxEdgeRatioCoarse) {
       issues.add('blur');
     }
-    if (brightness < minBrightness || dark / total > maxDarkRatio) issues.add('dark');
-    if (brightness > maxBrightness || glare / total > maxGlareRatio) issues.add('overexposed');
+    if (brightness < minBrightness || dark / total > maxDarkRatio)
+      issues.add('dark');
+    if (brightness > maxBrightness || glare / total > maxGlareRatio)
+      issues.add('overexposed');
     if (math.min(width, height) < minShortSide) issues.add('low_resolution');
     return issues;
   }
@@ -176,7 +186,8 @@ class PhotoQuality {
   /// medidas valem igual com a foto girada, e evita uma segunda copia da foto na memoria.
   static List<String> _measure(String path) {
     var decoded = img.decodeImage(File(path).readAsBytesSync());
-    if (decoded == null) return const [];
+    if (decoded == null)
+      throw const FormatException('Arquivo de foto invalido.');
     final width = decoded.width;
     final height = decoded.height;
     final scale = math.min(1.0, analysisSide / math.max(width, height));
@@ -193,7 +204,8 @@ class PhotoQuality {
     for (var y = 0; y < h; y++) {
       for (var x = 0; x < w; x++) {
         final p = small.getPixel(x, y);
-        gray[y * w + x] = (0.299 * p.r + 0.587 * p.g + 0.114 * p.b).roundToDouble();
+        gray[y * w + x] =
+            (0.299 * p.r + 0.587 * p.g + 0.114 * p.b).roundToDouble();
       }
     }
     return issuesForGray(gray, w, h, width, height);
@@ -201,10 +213,34 @@ class PhotoQuality {
 
   static Future<List<String>> measure(String path) async {
     try {
+      if (Platform.isAndroid) {
+        final sample = await const MethodChannel('com.merchhub/photo_analysis')
+            .invokeMapMethod<String, dynamic>('sampleGray', {'path': path});
+        if (sample == null ||
+            sample['gray'] is! Uint8List ||
+            sample['width'] is! int ||
+            sample['height'] is! int ||
+            sample['originalWidth'] is! int ||
+            sample['originalHeight'] is! int) {
+          throw const FormatException('Resposta invalida da analise da foto.');
+        }
+        return await compute(_measureSample, sample);
+      }
       return await compute(_measure, path);
-    } catch (_) {
-      return const [];
+    } catch (error, stack) {
+      debugPrint('Falha ao analisar foto: $error\n$stack');
+      rethrow;
     }
+  }
+
+  static List<String> _measureSample(Map<String, dynamic> sample) {
+    final bytes = sample['gray'] as Uint8List;
+    final gray = Float64List(bytes.length);
+    for (var i = 0; i < bytes.length; i++) {
+      gray[i] = bytes[i].toDouble();
+    }
+    return issuesForGray(gray, sample['width'] as int, sample['height'] as int,
+        sample['originalWidth'] as int, sample['originalHeight'] as int);
   }
 
   /// Abre a câmera, confere a foto e repete se o promotor escolher "Tirar de novo".
@@ -212,8 +248,12 @@ class PhotoQuality {
   /// o nome do arquivo ganha "qa-ignored-(problemas)-" (o servidor registra isso).
   /// Todos os avisos permitem "Usar mesmo assim" desde a primeira tentativa.
   static Future<File?> captureChecked(
-      BuildContext context, ImagePicker picker, String label) async {
+      BuildContext context, ImagePicker picker, String label,
+      {Future<File> Function(File)? persistCapture,
+      Future<void> Function(String)? persistTimeToken}) async {
     while (true) {
+      final timeToken = await PhotoCaptureTime.start();
+      await persistTimeToken?.call(timeToken);
       final XFile? photo = await picker.pickImage(
         source: ImageSource.camera,
         preferredCameraDevice: CameraDevice.rear,
@@ -223,20 +263,43 @@ class PhotoQuality {
         requestFullMetadata: false,
       );
       if (photo == null) return null;
-      final file = File(photo.path);
-      final issues = await measure(photo.path);
-      if (issues.isEmpty || !context.mounted) return file;
-      final useAnyway = await _ask(context, file, issues, label);
-      if (useAnyway == true) {
-        final dir = file.parent.path;
-        final name = file.uri.pathSegments.last;
-        return file.rename('$dir${Platform.pathSeparator}qa-ignored-${issues.join('-')}-$name');
-      }
-      try {
+      final raw = File(photo.path);
+      final file = persistCapture == null ? raw : await persistCapture(raw);
+      await PhotoCaptureTime.seal(file, timeToken);
+      if (!context.mounted) return null;
+      final accepted = await reviewFile(context, file, label,
+          preserveSource: persistCapture != null);
+      if (accepted != null) return accepted;
+      if (persistCapture == null) {
+        await PhotoCaptureTime.proofFile(file).delete();
         await file.delete();
-      } catch (_) {}
+      }
       if (!context.mounted) return null;
     }
+  }
+
+  static Future<File?> reviewFile(BuildContext context, File file, String label,
+      {bool preserveSource = true}) async {
+    final issues = await measure(file.path);
+    if (!context.mounted) return null;
+    if (issues.isEmpty) return file;
+    final accepted = await _ask(context, file, issues, label);
+    if (accepted != true) return null;
+    final name = file.uri.pathSegments.last;
+    final path = '${file.parent.path}${Platform.pathSeparator}'
+        'qa-ignored-${issues.join('-')}-$name';
+    final result =
+        preserveSource ? await file.copy(path) : await file.rename(path);
+    final proof = PhotoCaptureTime.proofFile(file);
+    if (await proof.exists()) {
+      final target = PhotoCaptureTime.proofFile(result);
+      if (preserveSource) {
+        await proof.copy(target.path);
+      } else {
+        await proof.rename(target.path);
+      }
+    }
+    return result;
   }
 
   static Future<bool?> _ask(
@@ -259,13 +322,15 @@ class PhotoQuality {
                 child: Container(
                   color: const Color(0xFF0F172A),
                   height: MediaQuery.of(ctx).size.height * 0.34,
-                  child: Image.file(file, fit: BoxFit.contain),
+                  child: Image.file(file, fit: BoxFit.contain, cacheWidth: 768),
                 ),
               ),
               const SizedBox(height: 12),
               Text('Essa foto pode não servir',
                   style: const TextStyle(
-                      fontSize: 17, fontWeight: FontWeight.w700, color: Color(0xFFEF4444))),
+                      fontSize: 17,
+                      fontWeight: FontWeight.w700,
+                      color: Color(0xFFEF4444))),
               const SizedBox(height: 8),
               ...issues.map((issue) => Container(
                     margin: const EdgeInsets.only(bottom: 8),
@@ -280,14 +345,17 @@ class PhotoQuality {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(issueText[issue]![0],
-                            style: const TextStyle(fontWeight: FontWeight.w700)),
+                            style:
+                                const TextStyle(fontWeight: FontWeight.w700)),
                         const SizedBox(height: 2),
-                        Text(issueText[issue]![1], style: const TextStyle(fontSize: 13)),
+                        Text(issueText[issue]![1],
+                            style: const TextStyle(fontSize: 13)),
                       ],
                     ),
                   )),
               Text('📸 Dica: ${tipFor(label)}',
-                  style: const TextStyle(fontSize: 13, color: Color(0xFF475569))),
+                  style:
+                      const TextStyle(fontSize: 13, color: Color(0xFF475569))),
               const SizedBox(height: 12),
               ElevatedButton.icon(
                 onPressed: () => Navigator.of(ctx).pop(false),
@@ -317,13 +385,15 @@ class PhotoQuality {
       final s = v.replaceAll(RegExp(r'[^\w .,;:()/+-]'), '').trim();
       return s.length > 100 ? s.substring(0, 100) : s;
     }
+
     try {
       final info = DeviceInfoPlugin();
       if (Platform.isAndroid) {
         final a = await info.androidInfo;
-        final model = a.model.toLowerCase().startsWith(a.manufacturer.toLowerCase())
-            ? a.model
-            : '${a.manufacturer} ${a.model}';
+        final model =
+            a.model.toLowerCase().startsWith(a.manufacturer.toLowerCase())
+                ? a.model
+                : '${a.manufacturer} ${a.model}';
         headers['X-Device-Model'] = clean(model);
         headers['X-Device-OS'] = clean('Android ${a.version.release}');
       } else if (Platform.isIOS) {
@@ -332,6 +402,23 @@ class PhotoQuality {
         headers['X-Device-OS'] = clean('iOS ${i.systemVersion}');
       }
     } catch (_) {}
+    if (Platform.isAndroid) {
+      try {
+        final version = await const MethodChannel('com.merchhub/offline_clock')
+            .invokeMethod<String>('appVersion');
+        if (version == null || version.isEmpty) {
+          throw PlatformException(
+              code: 'app_version', message: 'Versao do aplicativo ausente.');
+        }
+        headers['X-App-Version'] = clean(version);
+      } on PlatformException catch (error, stack) {
+        appLogger.error('Falha ao identificar versao do aplicativo',
+            error: error, stackTrace: stack);
+      } on MissingPluginException catch (error, stack) {
+        appLogger.error('Canal de versao do aplicativo indisponivel',
+            error: error, stackTrace: stack);
+      }
+    }
     return _deviceHeaders = headers;
   }
 }

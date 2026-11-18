@@ -75,10 +75,13 @@ Para distribuir:
 5. iniciar o workflow `iOS TestFlight`; ele gera um IPA assinado e o envia ao App Store Connect
 6. apos o processamento, configurar os grupos e disponibilizar o build no TestFlight
 
-O workflow usa Flutter 3.38.5 e incrementa o build a partir de 27 usando o
-numero sequencial do Codemagic. Se algum build acima de 27 ja tiver sido
-enviado manualmente ao App Store Connect, ajuste o valor-base em `codemagic.yaml`
-antes da primeira execucao.
+O workflow usa Flutter 3.38.5 e soma 34 ao numero sequencial do Codemagic.
+Antes de executar, confira se o numero resultante e maior que o ultimo build
+aceito no App Store Connect.
+
+Para a versao 1.0.34, valide no TestFlight a leitura de avisos ao aparecerem
+na tela e a recuperacao de fotos apos interromper a conexao e reabrir o app.
+Use uma conta e um atendimento de teste.
 
 Na exportacao, `flutter build ipa` deve receber
 `--export-options-plist="$HOME/export_options.plist"`, gerado por

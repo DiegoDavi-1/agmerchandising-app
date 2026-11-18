@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'dart:io';
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import '../widgets/non_visit_reschedule_dialog.dart';
@@ -10,6 +12,10 @@ import 'package:image_picker/image_picker.dart';
 import '../models/brand_field.dart';
 import '../services/api_service.dart';
 import '../services/collection_draft_storage.dart';
+import '../services/photo_outbox.dart';
+import '../services/offline_clock.dart';
+import '../core/network/connectivity_service.dart';
+import '../core/logging/app_logger_v2.dart';
 import '../widgets/dynamic_field_widget.dart';
 import 'ponto_page.dart';
 import 'store_expiries_page.dart';
@@ -50,39 +56,179 @@ class _DynamicBrandCollectionPageState
   String? _draftKey;
   Timer? _draftTimer;
   bool _draftDone = false;
+  String? _submissionId;
+  Map<String, dynamic>? _submissionRequest;
+  Map<String, dynamic>? _submissionResult;
+  List<Map<String, Object?>> _photoJobs = [];
+  int _photoRevision = 0;
 
   @override
   void initState() {
     super.initState();
+    if (PhotoOutbox.isSupported) {
+      PhotoOutbox.instance.addListener(_photosChanged);
+    }
     _loadBrandFields();
     _getCurrentLocation();
   }
 
   @override
   void dispose() {
+    if (PhotoOutbox.isSupported) {
+      PhotoOutbox.instance.removeListener(_photosChanged);
+      unawaited(PhotoOutbox.instance
+          .closeAttendance(widget.brandId, widget.storeId)
+          .catchError((Object error, StackTrace stack) {
+        appLogger.error('Falha ao encerrar rota de recuperacao',
+            error: error, stackTrace: stack);
+      }));
+    }
     if (_draftTimer?.isActive == true) {
       _draftTimer!.cancel();
-      _writeDraft();
+      unawaited(_writeDraft().catchError((Object error, StackTrace stack) {
+        appLogger.error('Falha ao gravar rascunho',
+            error: error, stackTrace: stack);
+      }));
     }
     super.dispose();
   }
 
   void _scheduleDraftSave() {
     _draftTimer?.cancel();
-    _draftTimer = Timer(const Duration(milliseconds: 400), _writeDraft);
+    _draftTimer = Timer(const Duration(milliseconds: 400), () {
+      unawaited(_writeDraft().catchError((Object error, StackTrace stack) {
+        appLogger.error('Falha ao gravar rascunho',
+            error: error, stackTrace: stack);
+        if (mounted) _snack('Nao foi possivel salvar o rascunho: $error');
+      }));
+    });
   }
 
-  void _writeDraft() {
+  Future<void> _writeDraft() async {
     final key = _draftKey;
     if (key == null || _draftDone) return;
-    CollectionDraftStorage.save(key, Map<String, dynamic>.of(_collectedData));
+    await CollectionDraftStorage.save(
+        key, Map<String, dynamic>.of(_collectedData),
+        submissionId: _submissionId,
+        submissionRequest: _submissionRequest,
+        submissionResult: _submissionResult);
   }
 
-  Future<void> _clearDraft() async {
-    _draftDone = true;
+  Future<void> _clearDraft({bool offline = false}) async {
     _draftTimer?.cancel();
+    if (PhotoOutbox.isSupported) {
+      final ids = List<String>.from(
+          _submissionRequest?['photo_job_ids'] ?? const <String>[]);
+      await PhotoOutbox.instance
+          .submitJobs(ids, widget.brandId, widget.storeId);
+      if (!offline) {
+        await PhotoOutbox.instance.completeSubmitted(ids);
+      }
+    }
     final key = _draftKey;
     if (key != null) await CollectionDraftStorage.clear(key);
+    _draftDone = true;
+  }
+
+  void _photosChanged() {
+    unawaited(_refreshPhotoJobs().catchError((Object error, StackTrace stack) {
+      appLogger.error('Falha ao atualizar fotos locais',
+          error: error, stackTrace: stack);
+      if (mounted) _snack('Nao foi possivel recuperar as fotos locais: $error');
+    }));
+  }
+
+  Future<void> _refreshPhotoJobs() async {
+    final revision = ++_photoRevision;
+    final jobs =
+        await PhotoOutbox.instance.jobs(widget.brandId, widget.storeId);
+    if (!mounted ||
+        _isLoading ||
+        _submissionResult != null ||
+        revision != _photoRevision) {
+      return;
+    }
+    final names = _fields.map((field) => field.fieldName).toSet();
+    final merged = PhotoOutbox.merge(_collectedData,
+        jobs.where((job) => names.contains(job['field_name'])).toList());
+    final changed = jsonEncode(merged) != jsonEncode(_collectedData);
+    setState(() {
+      _photoJobs = jobs;
+      _collectedData = merged;
+    });
+    if (changed) await _writeDraft();
+  }
+
+  Future<void> _reviewRecoveredPhotos() async {
+    final outbox = PhotoOutbox.instance;
+    for (final job in await outbox.jobs(widget.brandId, widget.storeId)) {
+      if (job['status'] != 'review' || job['local_path'] is! String) continue;
+      if (!mounted) return;
+      try {
+        await outbox.ensureTimeProof(
+            job['id'] as String, File(job['local_path'] as String));
+      } catch (error) {
+        if (!mounted) return;
+        final redo = await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('Horário da foto não verificado'),
+            content: Text('$error\n\nReconecte-se e tente novamente. '
+                'Se a referência expirou, será necessário refazer a foto.'),
+            actions: [
+              TextButton(
+                  onPressed: () => Navigator.pop(context, false),
+                  child: const Text('Manter foto')),
+              TextButton(
+                  onPressed: () => Navigator.pop(context, true),
+                  child: const Text('Refazer foto')),
+            ],
+          ),
+        );
+        if (redo == true) {
+          await outbox.cancel(job['id'] as String);
+          if (mounted) _snack('Toque em Tirar Foto para refazer a foto.');
+        }
+        continue;
+      }
+      if (!mounted) return;
+      final accepted = await PhotoQuality.reviewFile(context,
+          File(job['local_path'] as String), job['field_label'] as String);
+      if (!mounted) return;
+      if (accepted == null) {
+        await outbox.cancel(job['id'] as String);
+        _snack('Toque em Tirar Foto para refazer a foto recuperada.');
+      } else {
+        await outbox.ready(job['id'] as String, accepted);
+      }
+    }
+    await _refreshPhotoJobs();
+    outbox.retry();
+  }
+
+  Widget _buildPhotoQueueStrip() {
+    final hasReview = _photoJobs.any((job) => job['status'] == 'review');
+    final pending = _photoJobs
+        .where((job) => job['status'] == 'queued' || job['status'] == 'review')
+        .length;
+    final error = PhotoOutbox.instance.lastError;
+    if (pending == 0 && error == null) return const SizedBox.shrink();
+    return Material(
+      color: Colors.amber.shade50,
+      child: ListTile(
+        leading: const Icon(Icons.cloud_upload_outlined, color: Colors.orange),
+        title: Text(pending == 1
+            ? '1 foto salva no aparelho, aguardando envio.'
+            : '$pending fotos salvas no aparelho, aguardando envio.'),
+        subtitle: error == null ? null : Text(error),
+        trailing: TextButton(
+          onPressed: hasReview
+              ? () => unawaited(_reviewRecoveredPhotos())
+              : PhotoOutbox.instance.retry,
+          child: Text(hasReview ? 'Revisar' : 'Reenviar'),
+        ),
+      ),
+    );
   }
 
   static bool _hasContent(dynamic value) {
@@ -294,7 +440,8 @@ class _DynamicBrandCollectionPageState
       showDragHandle: true,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setSheet) {
-          final needsNote = selected != null && flag(selected!, 'requires_note');
+          final needsNote =
+              selected != null && flag(selected!, 'requires_note');
           final needsPhoto =
               selected != null && flag(selected!, 'requires_photo');
           return Padding(
@@ -382,11 +529,11 @@ class _DynamicBrandCollectionPageState
         final file = await PhotoQuality.captureChecked(
             context, ImagePicker(), 'Não atendimento');
         if (file == null) {
-          _snack('Este motivo exige uma foto de evidência.',
-              color: Colors.red);
+          _snack('Este motivo exige uma foto de evidência.', color: Colors.red);
           return;
         }
-        final upload = await ApiService.uploadPhoto(file);
+        final upload =
+            await ApiService.uploadPhoto(file, requireTimeProof: true);
         photoUrl = upload?['photo_url']?.toString();
         if (photoUrl == null) throw Exception('Falha ao enviar a foto.');
       }
@@ -479,6 +626,24 @@ class _DynamicBrandCollectionPageState
     });
 
     try {
+      final user = await ApiService.getUserData();
+      final draftKey = CollectionDraftStorage.key(
+          user?['id'], widget.brandId, widget.storeId);
+      final session = await CollectionDraftStorage.loadSession(draftKey);
+      _draftKey = draftKey;
+      _submissionId = session?.submissionId ?? ApiService.createSubmissionId();
+      _submissionRequest = session?.submissionRequest;
+      _submissionResult = session?.submissionResult;
+      _draftDone = false;
+      if (_submissionResult != null) {
+        if (!mounted) return;
+        setState(() {
+          _collectedData = session!.data;
+          _needsCheckIn = false;
+          _isLoading = false;
+        });
+        return;
+      }
       if (widget.storeId != null) {
         final visitStatus =
             await ApiService.fetchVisitStatus(widget.storeId!, widget.brandId);
@@ -487,7 +652,9 @@ class _DynamicBrandCollectionPageState
               'Não foi possível validar a entrada desta loja.');
         }
         _requiresVisitClock = visitStatus['requires_check_in_out'] == true;
-        _needsCheckIn = _requiresVisitClock && visitStatus['is_open'] != true;
+        _needsCheckIn = _submissionRequest == null &&
+            _requiresVisitClock &&
+            visitStatus['is_open'] != true;
         if (_needsCheckIn) {
           setState(() => _isLoading = false);
           return;
@@ -532,14 +699,12 @@ class _DynamicBrandCollectionPageState
       }
 
       // Recupera o atendimento em andamento (ex.: app fechado pelo Android na câmera).
-      final user = await ApiService.getUserData();
-      final draftKey = CollectionDraftStorage.key(
-          user?['id'], widget.brandId, widget.storeId);
-      final draft = await CollectionDraftStorage.load(draftKey);
+      final draft = session?.data;
       final names = loadedFields.map((f) => f.fieldName).toSet();
       final restored = <String, dynamic>{
         for (final entry in (draft ?? const <String, dynamic>{}).entries)
-          if (names.contains(entry.key)) entry.key: entry.value,
+          if (_submissionRequest != null || names.contains(entry.key))
+            entry.key: entry.value,
       };
       if (!mounted) return;
 
@@ -551,6 +716,12 @@ class _DynamicBrandCollectionPageState
         _draftDone = false;
         _isLoading = false;
       });
+
+      if (PhotoOutbox.isSupported) {
+        await PhotoOutbox.instance
+            .openAttendance(widget.brandId, widget.brandName, widget.storeId);
+        await _reviewRecoveredPhotos();
+      }
 
       if (restored.values.any(_hasContent)) {
         _snack('Recuperamos o atendimento que estava em andamento.',
@@ -609,7 +780,8 @@ class _DynamicBrandCollectionPageState
             (value is List && value.isEmpty) ||
             (field.fieldType == 'shelf_space' &&
                 value is List &&
-                !value.any((entry) => entry is Map && entry['facings'] != null)) ||
+                !value.any(
+                    (entry) => entry is Map && entry['facings'] != null)) ||
             (value is bool &&
                 value == false &&
                 field.fieldType == 'checkbox')) {
@@ -628,98 +800,80 @@ class _DynamicBrandCollectionPageState
   }
 
   Future<void> _saveCollection() async {
-    if (!_validateRequiredFields()) {
-      return;
-    }
-
-    if (!await _ensureLocationReady()) {
-      return;
-    }
-
-    setState(() {
-      _isSaving = true;
-    });
-
+    if (_isSaving) return;
+    setState(() => _isSaving = true);
     try {
+      if (_submissionResult != null) {
+        await _writeDraft();
+        await _finishSavedCollection();
+        return;
+      }
+      if (_submissionRequest == null) {
+        if (!_validateRequiredFields() || !await _ensureLocationReady()) return;
+        final eventTime = await OfflineClock.capture(ApiService.token);
+        final online = await ConnectivityService().isOnline();
+        if (PhotoOutbox.isSupported) {
+          await _writeDraft();
+          if (online) await PhotoOutbox.instance.sync();
+          await _refreshPhotoJobs();
+          if (_photoJobs.any((job) =>
+              (online && job['status'] == 'queued') ||
+              job['status'] == 'review' ||
+              job['status'] == 'capturing')) {
+            throw StateError(
+                'As fotos estao salvas no aparelho. Aguarde o envio antes de concluir.');
+          }
+        }
+        _submissionRequest = {
+          'data': jsonDecode(jsonEncode(_collectedData)),
+          'latitude': _currentPosition?.latitude,
+          'longitude': _currentPosition?.longitude,
+          'location_address': _resolvedAddress,
+          'requires_visit_clock': _requiresVisitClock,
+          'event_time': eventTime,
+          'photo_job_ids':
+              _photoJobs.map((job) => job['id'] as String).toList(),
+        };
+      }
+      await _writeDraft();
+      final request = _submissionRequest!;
       final result = await ApiService.saveCollection(
         brandId: widget.brandId,
-        collectedData: _collectedData,
+        collectedData: Map<String, dynamic>.from(request['data'] as Map),
         brandName: widget.brandName,
         storeId: widget.storeId,
-        latitude: _currentPosition?.latitude,
-        longitude: _currentPosition?.longitude,
-        locationAddress: _resolvedAddress ??
-            (_currentPosition != null
-                ? '${_currentPosition!.latitude}, ${_currentPosition!.longitude}'
-                : null),
-        requiresVisitClock: _requiresVisitClock,
+        latitude: (request['latitude'] as num?)?.toDouble(),
+        longitude: (request['longitude'] as num?)?.toDouble(),
+        locationAddress: request['location_address'] as String?,
+        requiresVisitClock: request['requires_visit_clock'] == true,
+        eventTime: Map<String, dynamic>.from(request['event_time'] as Map),
+        photoJobIds: List<String>.from(request['photo_job_ids'] as List),
+        submissionId: _submissionId,
       );
 
-      if (mounted) {
-        if (result['success'] == true) {
-          await _clearDraft();
-          final isOffline = result['offline'] == true;
-
-          if (isOffline) {
-            if (mounted) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text(
-                      '📴 Salvo offline. Será enviado quando houver conexão.'),
-                  backgroundColor: Colors.orange,
-                ),
-              );
-              Navigator.of(context).pop(true);
-            }
-          } else {
-            if (mounted) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('✅ Atendimento enviado com sucesso!'),
-                  backgroundColor: Colors.green,
-                ),
-              );
-            }
-            if (mounted) {
-              if (result['requires_clock_out'] == true &&
-                  widget.storeId != null) {
-                final clockedOut = await Navigator.push<bool>(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => PontoPage(
-                      initialStoreId: widget.storeId,
-                      initialBrandId: widget.brandId,
-                      requiredAction: 'saida',
-                    ),
-                  ),
-                );
-                if (!mounted) return;
-                if (clockedOut != true) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text(
-                          'O atendimento foi salvo, mas ainda falta registrar a saída.'),
-                      backgroundColor: Colors.orange,
-                    ),
-                  );
-                  return;
-                }
-              }
-              Navigator.of(context).pop(true);
-            }
-          }
-        } else {
-          final message =
-              result['error']?.toString() ?? 'Erro ao salvar coleta';
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('❌ $message'),
-              backgroundColor: Colors.red,
-            ),
-          );
+      if (result['success'] == true) {
+        _submissionResult = Map<String, dynamic>.from(result);
+        await _writeDraft();
+        if (mounted) setState(() {});
+        await _finishSavedCollection();
+      } else {
+        final status = result['status'];
+        if (status is int &&
+            status >= 400 &&
+            status < 500 &&
+            status != 408 &&
+            status != 409) {
+          _submissionRequest = null;
+          await _writeDraft();
+        }
+        if (mounted) {
+          _snack(result['error']?.toString() ??
+              'Nao foi possivel confirmar o envio. Tente novamente; o rascunho foi preservado.');
         }
       }
-    } catch (e) {
+    } catch (e, stack) {
+      appLogger.error('Falha ao concluir atendimento',
+          error: e, stackTrace: stack);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -735,6 +889,51 @@ class _DynamicBrandCollectionPageState
         });
       }
     }
+  }
+
+  Future<void> _finishSavedCollection() async {
+    final result = _submissionResult!;
+    if (result['offline'] != true &&
+        result['requires_clock_out'] == true &&
+        widget.storeId != null) {
+      final status =
+          await ApiService.fetchVisitStatus(widget.storeId!, widget.brandId);
+      if (status['success'] != true) {
+        throw StateError(status['error']?.toString() ??
+            'Atendimento salvo. Nao foi possivel verificar a saida.');
+      }
+      final savedEntry = result['clock_in_id'];
+      if (status['is_open'] == true &&
+          (savedEntry == null || savedEntry == status['clock_in_id'])) {
+        if (!mounted) return;
+        final clockedOut = await Navigator.push<bool>(
+          context,
+          MaterialPageRoute(
+            builder: (_) => PontoPage(
+              initialStoreId: widget.storeId,
+              initialBrandId: widget.brandId,
+              requiredAction: 'saida',
+            ),
+          ),
+        );
+        if (!mounted || clockedOut != true) {
+          if (mounted) {
+            _snack(
+                'Atendimento salvo. Falta registrar a saida; nao envie novamente.',
+                color: Colors.orange);
+          }
+          return;
+        }
+      }
+    }
+    await _clearDraft(offline: result['offline'] == true);
+    if (!mounted) return;
+    _snack(
+        result['offline'] == true
+            ? 'Salvo offline. Sera sincronizado sem criar outro atendimento.'
+            : 'Atendimento enviado com sucesso!',
+        color: result['offline'] == true ? Colors.orange : Colors.green);
+    Navigator.of(context).pop(true);
   }
 
   @override
@@ -766,7 +965,11 @@ class _DynamicBrandCollectionPageState
             ? Colors.black.withValues(alpha: 0.3)
             : brandColor.withValues(alpha: 0.4),
         actions: [
-          if (!_isLoading && _fields.isNotEmpty)
+          if (!_isLoading &&
+              !_isSaving &&
+              _submissionRequest == null &&
+              _submissionResult == null &&
+              _fields.isNotEmpty)
             IconButton(
               icon: const Icon(Icons.refresh),
               onPressed: _loadBrandFields,
@@ -851,141 +1054,194 @@ class _DynamicBrandCollectionPageState
                         ],
                       ),
                     )
-                  : _fields.isEmpty
-                      ? const Center(
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Icon(Icons.info_outline,
-                                  size: 64, color: Colors.orange),
-                              SizedBox(height: 16),
-                              Text(
-                                'Esta marca não tem campos configurados.',
-                                textAlign: TextAlign.center,
-                              ),
-                              SizedBox(height: 8),
-                              Text(
-                                'Configure campos no Admin Dashboard primeiro.',
-                                style:
-                                    TextStyle(fontSize: 12, color: Colors.grey),
-                                textAlign: TextAlign.center,
-                              ),
-                            ],
+                  : _submissionResult != null
+                      ? Center(
+                          child: Padding(
+                            padding: const EdgeInsets.all(24),
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const Icon(Icons.check_circle,
+                                    size: 64, color: Colors.green),
+                                const SizedBox(height: 16),
+                                const Text(
+                                  'Atendimento salvo. Nao e necessario reenviar as fotos.',
+                                  textAlign: TextAlign.center,
+                                ),
+                                const SizedBox(height: 20),
+                                ElevatedButton(
+                                  onPressed: _isSaving ? null : _saveCollection,
+                                  child: Text(_isSaving
+                                      ? 'Aguarde...'
+                                      : _submissionResult?[
+                                                  'requires_clock_out'] ==
+                                              true
+                                          ? 'Registrar saida'
+                                          : 'Concluir'),
+                                ),
+                              ],
+                            ),
                           ),
                         )
-                      : Column(
-                          children: [
-                            // Lista de campos
-                            Expanded(
-                              child: ListView.builder(
-                                padding: const EdgeInsets.only(bottom: 12),
-                                itemCount: _fields.length +
-                                    (widget.storeId != null ? 1 : 0) +
-                                    2,
-                                itemBuilder: (context, index) {
-                                  if (index == 0) {
-                                    return Padding(
-                                      padding:
-                                          const EdgeInsets.only(bottom: 12),
-                                      child: _buildLocationStrip(isDark),
-                                    );
-                                  }
-                                  index -= 1;
-                                  if (widget.storeId != null) {
-                                    if (index == 0) {
-                                      return _buildExpiriesShortcut();
-                                    }
-                                    index -= 1;
-                                  }
-                                  if (index == _fields.length) {
-                                    return _buildNonVisitButton();
-                                  }
-                                  final field = _fields[index];
-                                  return DynamicFieldWidget(
-                                    field: field,
-                                    initialValue:
-                                        _collectedData[field.fieldName],
-                                    onValueChanged: (fieldName, value) {
-                                      setState(() {
-                                        _collectedData[fieldName] = value;
-                                      });
-                                      _scheduleDraftSave();
-                                    },
-                                  );
-                                },
-                              ),
-                            ),
-
-                            // Botão de salvar
-                            Container(
-                              padding:
-                                  const EdgeInsets.fromLTRB(16, 12, 16, 16),
-                              decoration: BoxDecoration(
-                                color: isDark
-                                    ? const Color(0xFF1A1F2E)
-                                    : Colors.white,
-                                boxShadow: [
-                                  BoxShadow(
-                                    color: Colors.black
-                                        .withOpacity(isDark ? 0.3 : 0.08),
-                                    blurRadius: 8,
-                                    offset: const Offset(0, -2),
+                      : _fields.isEmpty
+                          ? const Center(
+                              child: Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Icon(Icons.info_outline,
+                                      size: 64, color: Colors.orange),
+                                  SizedBox(height: 16),
+                                  Text(
+                                    'Esta marca não tem campos configurados.',
+                                    textAlign: TextAlign.center,
+                                  ),
+                                  SizedBox(height: 8),
+                                  Text(
+                                    'Configure campos no Admin Dashboard primeiro.',
+                                    style: TextStyle(
+                                        fontSize: 12, color: Colors.grey),
+                                    textAlign: TextAlign.center,
                                   ),
                                 ],
                               ),
-                              child: SafeArea(
-                                child: Row(
-                                  children: [
-                                    // Botão Salvar
-                                    Expanded(
-                                      child: SizedBox(
-                                        height: 52,
-                                        child: ElevatedButton(
-                                          onPressed:
-                                              _isSaving
+                            )
+                          : Column(
+                              children: [
+                                if (_submissionRequest != null)
+                                  const Padding(
+                                    padding: EdgeInsets.all(12),
+                                    child: Text(
+                                      'Envio aguardando confirmacao. Os dados estao protegidos; tente novamente sem criar outro atendimento.',
+                                      textAlign: TextAlign.center,
+                                    ),
+                                  ),
+                                if (PhotoOutbox.isSupported)
+                                  _buildPhotoQueueStrip(),
+                                // Lista de campos
+                                Expanded(
+                                  child: ListView.builder(
+                                    padding: const EdgeInsets.only(bottom: 12),
+                                    itemCount: _fields.length +
+                                        (widget.storeId != null ? 1 : 0) +
+                                        2,
+                                    itemBuilder: (context, index) {
+                                      if (index == 0) {
+                                        return Padding(
+                                          padding:
+                                              const EdgeInsets.only(bottom: 12),
+                                          child: _buildLocationStrip(isDark),
+                                        );
+                                      }
+                                      index -= 1;
+                                      if (widget.storeId != null) {
+                                        if (index == 0) {
+                                          return _buildExpiriesShortcut();
+                                        }
+                                        index -= 1;
+                                      }
+                                      if (index == _fields.length) {
+                                        if (_submissionRequest != null) {
+                                          return const SizedBox.shrink();
+                                        }
+                                        return _buildNonVisitButton();
+                                      }
+                                      final field = _fields[index];
+                                      return AbsorbPointer(
+                                        absorbing: _isSaving ||
+                                            _submissionRequest != null,
+                                        child: DynamicFieldWidget(
+                                          key: ValueKey(field.fieldName),
+                                          field: field,
+                                          brandName: widget.brandName,
+                                          storeId: widget.storeId,
+                                          persistDraft: _writeDraft,
+                                          initialValue:
+                                              _collectedData[field.fieldName],
+                                          onValueChanged: (fieldName, value) {
+                                            _photoRevision++;
+                                            setState(() {
+                                              _collectedData[fieldName] = value;
+                                            });
+                                            _scheduleDraftSave();
+                                          },
+                                        ),
+                                      );
+                                    },
+                                  ),
+                                ),
+
+                                // Botão de salvar
+                                Container(
+                                  padding:
+                                      const EdgeInsets.fromLTRB(16, 12, 16, 16),
+                                  decoration: BoxDecoration(
+                                    color: isDark
+                                        ? const Color(0xFF1A1F2E)
+                                        : Colors.white,
+                                    boxShadow: [
+                                      BoxShadow(
+                                        color: Colors.black
+                                            .withOpacity(isDark ? 0.3 : 0.08),
+                                        blurRadius: 8,
+                                        offset: const Offset(0, -2),
+                                      ),
+                                    ],
+                                  ),
+                                  child: SafeArea(
+                                    child: Row(
+                                      children: [
+                                        // Botão Salvar
+                                        Expanded(
+                                          child: SizedBox(
+                                            height: 52,
+                                            child: ElevatedButton(
+                                              onPressed: _isSaving
                                                   ? null
                                                   : _saveCollection,
-                                          style: ElevatedButton.styleFrom(
-                                            backgroundColor: brandColor,
-                                            foregroundColor: Colors.white,
-                                            disabledBackgroundColor:
-                                                Colors.grey[300],
-                                            elevation: 0,
-                                            shape: RoundedRectangleBorder(
-                                              borderRadius:
-                                                  BorderRadius.circular(12),
+                                              style: ElevatedButton.styleFrom(
+                                                backgroundColor: brandColor,
+                                                foregroundColor: Colors.white,
+                                                disabledBackgroundColor:
+                                                    Colors.grey[300],
+                                                elevation: 0,
+                                                shape: RoundedRectangleBorder(
+                                                  borderRadius:
+                                                      BorderRadius.circular(12),
+                                                ),
+                                              ),
+                                              child: _isSaving
+                                                  ? const SizedBox(
+                                                      width: 24,
+                                                      height: 24,
+                                                      child:
+                                                          CircularProgressIndicator(
+                                                        strokeWidth: 2.5,
+                                                        valueColor:
+                                                            AlwaysStoppedAnimation<
+                                                                    Color>(
+                                                                Colors.white),
+                                                      ),
+                                                    )
+                                                  : Text(
+                                                      _submissionRequest != null
+                                                          ? 'Tentar envio novamente'
+                                                          : 'Salvar Coleta',
+                                                      style: const TextStyle(
+                                                        fontSize: 16,
+                                                        fontWeight:
+                                                            FontWeight.w600,
+                                                        letterSpacing: 0.3,
+                                                      ),
+                                                    ),
                                             ),
                                           ),
-                                          child: _isSaving
-                                              ? const SizedBox(
-                                                  width: 24,
-                                                  height: 24,
-                                                  child:
-                                                      CircularProgressIndicator(
-                                                    strokeWidth: 2.5,
-                                                    valueColor:
-                                                        AlwaysStoppedAnimation<
-                                                                Color>(
-                                                            Colors.white),
-                                                  ),
-                                                )
-                                              : const Text(
-                                                  'Salvar Coleta',
-                                                  style: TextStyle(
-                                                    fontSize: 16,
-                                                    fontWeight: FontWeight.w600,
-                                                    letterSpacing: 0.3,
-                                                  ),
-                                                ),
                                         ),
-                                      ),
+                                      ],
                                     ),
-                                  ],
+                                  ),
                                 ),
-                              ),
+                              ],
                             ),
-                          ],
-                        ),
     );
   }
 }

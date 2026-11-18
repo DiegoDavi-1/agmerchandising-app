@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:geolocator/geolocator.dart';
@@ -39,6 +40,109 @@ Position position({bool mocked = false}) => Position(
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+
+  for (final failure in <String, Object>{
+    'client': http.ClientException('Software caused connection abort'),
+    'socket': const SocketException('Connection aborted'),
+    'timeout': TimeoutException('Connection timed out'),
+  }.entries) {
+    test(
+        'visit status retries ${failure.key} failures without bypassing check-in',
+        () async {
+      FlutterSecureStorage.setMockInitialValues({'auth_token': 'visit-test'});
+      await ApiService.init();
+      var attempts = 0;
+      final result = await http.runWithClient(
+          () => ApiService.fetchVisitStatus(168, 42),
+          () => MockClient((request) async {
+                expect(request.url.path, '/api/clock/visit-status');
+                expect(request.url.queryParameters,
+                    {'store_id': '168', 'brand_id': '42'});
+                attempts++;
+                if (attempts == 1) throw failure.value;
+                return http.Response(
+                    '{"success":true,"requires_check_in_out":true,"is_open":false}',
+                    200);
+              }));
+      expect(attempts, 2);
+      expect(result['success'], true);
+      expect(result['requires_check_in_out'], true);
+      expect(result['is_open'], false);
+    });
+  }
+
+  test(
+      'visit status reports exhausted connection retries without technical URLs',
+      () async {
+    FlutterSecureStorage.setMockInitialValues({'auth_token': 'visit-test'});
+    await ApiService.init();
+    var attempts = 0;
+    final result = await http.runWithClient(
+        () => ApiService.fetchVisitStatus(168, 42),
+        () => MockClient((request) async {
+              attempts++;
+              throw http.ClientException(
+                  'Software caused connection abort', request.url);
+            }));
+    expect(attempts, 4);
+    expect(result['success'], false);
+    expect(result['error'], contains('conexão'));
+    expect(result['error'], isNot(contains('merchhubapp.com')));
+    expect(result.containsKey('is_open'), false);
+  });
+
+  test('visit status does not retry or hide access rejection', () async {
+    FlutterSecureStorage.setMockInitialValues({'auth_token': 'visit-test'});
+    await ApiService.init();
+    var attempts = 0;
+    final result = await http.runWithClient(
+        () => ApiService.fetchVisitStatus(168, 42),
+        () => MockClient((request) async {
+              attempts++;
+              return http.Response(
+                  '{"success":false,"error":"Acesso negado"}', 403);
+            }));
+    expect(attempts, 1);
+    expect(result, {'success': false, 'error': 'Acesso negado'});
+  });
+
+  test('visit status still retries temporary HTTP errors', () async {
+    FlutterSecureStorage.setMockInitialValues({'auth_token': 'visit-test'});
+    await ApiService.init();
+    var attempts = 0;
+    final result = await http.runWithClient(
+        () => ApiService.fetchVisitStatus(168, 42),
+        () => MockClient((request) async {
+              attempts++;
+              return attempts == 1
+                  ? http.Response('{"error":"Indisponivel"}', 503)
+                  : http.Response(
+                      '{"success":true,"requires_check_in_out":false,"is_open":false}',
+                      200);
+            }));
+    expect(attempts, 2);
+    expect(result['success'], true);
+  });
+
+  test('visit status transport retries remain disabled for writes', () async {
+    FlutterSecureStorage.setMockInitialValues({'auth_token': 'visit-test'});
+    await ApiService.init();
+    var attempts = 0;
+    await expectLater(
+        http.runWithClient(
+            () => ApiService.createExpiry(
+                storeId: 168,
+                brandId: 42,
+                productName: 'Teste',
+                expiryDate: DateTime(2027, 1, 1)),
+            () => MockClient((request) async {
+                  expect(request.method, 'POST');
+                  attempts++;
+                  throw http.ClientException('Connection interrupted');
+                })),
+        throwsA(isA<http.ClientException>()));
+    expect(attempts, 1);
+  });
 
   test('publishes once per minute only while check-in is open', () async {
     FlutterSecureStorage.setMockInitialValues({'auth_token': 'tracking-test'});

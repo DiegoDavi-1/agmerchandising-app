@@ -255,17 +255,81 @@ class PortalMessages extends StatefulWidget {
   State<PortalMessages> createState() => _PortalMessagesState();
 }
 
-class _PortalMessagesState extends State<PortalMessages> {
+class _PortalMessagesState extends State<PortalMessages>
+    with WidgetsBindingObserver {
   List<Map<String, dynamic>>? _messages;
   String? _error;
   int? _unreadCount;
-  Object? _markingReadId;
+  final _viewportKey = GlobalKey();
+  final _messageKeys = <Object, GlobalKey>{};
+  final _visibleMessages = <Object>{};
+  bool _visibilityCheckScheduled = false;
+  final _markingRead = <Object>{};
+  final _confirmedRead = <Object>{};
   int _loadVersion = 0;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _load();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    _scheduleVisibilityCheck();
+  }
+
+  void _scheduleVisibilityCheck() {
+    if (widget.supervisor || _visibilityCheckScheduled) return;
+    _visibilityCheckScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _visibilityCheckScheduled = false;
+      if (mounted) _checkVisibleMessages();
+    });
+    WidgetsBinding.instance.ensureVisualUpdate();
+  }
+
+  void _checkVisibleMessages() {
+    final lifecycle = WidgetsBinding.instance.lifecycleState;
+    if (ModalRoute.of(context)?.isCurrent == false ||
+        (lifecycle != null && lifecycle != AppLifecycleState.resumed)) {
+      _visibleMessages.clear();
+      return;
+    }
+    final viewport = _viewportKey.currentContext?.findRenderObject();
+    if (viewport is! RenderBox || !viewport.hasSize) return;
+    final bounds = viewport.localToGlobal(Offset.zero) & viewport.size;
+    _visibleMessages.removeWhere((id) {
+      final box = _messageKeys[id]?.currentContext?.findRenderObject();
+      return !_isMessageVisible(box, bounds);
+    });
+    for (final item in _messages ?? const <Map<String, dynamic>>[]) {
+      final id = item['id'];
+      if (id == null || item['readAt'] != null || _confirmedRead.contains(id)) {
+        continue;
+      }
+      final box = _messageKeys[id]?.currentContext?.findRenderObject();
+      if (_isMessageVisible(box, bounds) && _visibleMessages.add(id)) {
+        _markRead(id);
+      }
+    }
+  }
+
+  bool _isMessageVisible(RenderObject? box, Rect viewport) {
+    if (box is! RenderBox || !box.attached || !box.hasSize) return false;
+    final size = box.size;
+    if (size.isEmpty) return false;
+    final start = box.localToGlobal(Offset.zero) &
+        Size(size.width, size.height.clamp(0, 64).toDouble());
+    final visible = start.intersect(viewport);
+    return !visible.isEmpty && visible.height >= start.height / 2;
   }
 
   Future<void> _load() async {
@@ -285,8 +349,18 @@ class _PortalMessagesState extends State<PortalMessages> {
           .toList();
       if (mounted && version == _loadVersion) {
         setState(() {
+          _visibleMessages.clear();
+          _messageKeys.removeWhere(
+              (id, _) => !messages.any((item) => item['id'] == id));
           _messages = messages;
-          if (!widget.supervisor) _unreadCount = result['unreadCount'] as int;
+          if (!widget.supervisor) {
+            _unreadCount = (result['unreadCount'] as int) -
+                messages
+                    .where((item) =>
+                        item['readAt'] == null &&
+                        _confirmedRead.contains(item['id']))
+                    .length;
+          }
         });
       }
     } catch (e) {
@@ -296,29 +370,33 @@ class _PortalMessagesState extends State<PortalMessages> {
     }
   }
 
-  Future<void> _markRead(Map<String, dynamic> item) async {
-    if (_markingReadId != null) return;
-    final id = item['id'];
-    if (id == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Mensagem sem identificador.')));
-      return;
-    }
-    setState(() => _markingReadId = id);
+  Future<void> _markRead(Object id) async {
+    if (!_markingRead.add(id)) return;
     try {
-      await (widget.markPromoterMessageRead ??
+      final result = await (widget.markPromoterMessageRead ??
           ApiService.markPromoterMessageRead)(id);
+      if (result['success'] != true) {
+        throw StateError('Leitura não confirmada pelo servidor.');
+      }
       if (!mounted) return;
-      // Recarregar também a contagem do servidor, sem presumir que ela diminuiu em um.
-      await _load();
+      setState(() {
+        _confirmedRead.add(id);
+        final stillUnread = _messages?.any(
+            (message) => message['id'] == id && message['readAt'] == null);
+        if (stillUnread == true && (_unreadCount ?? 0) > 0) {
+          _unreadCount = _unreadCount! - 1;
+        }
+      });
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Não foi possível marcar como lida: $e')),
+          const SnackBar(
+              content: Text(
+                  'Não foi possível registrar a leitura. Role a lista e volte à mensagem para tentar novamente.')),
         );
       }
     } finally {
-      if (mounted) setState(() => _markingReadId = null);
+      _markingRead.remove(id);
     }
   }
 
@@ -386,6 +464,7 @@ class _PortalMessagesState extends State<PortalMessages> {
 
   @override
   Widget build(BuildContext context) {
+    if (ModalRoute.of(context)?.isCurrent != false) _scheduleVisibilityCheck();
     return Column(children: [
       if (!widget.supervisor && _unreadCount != null && _unreadCount! > 0)
         Padding(
@@ -478,49 +557,64 @@ class _PortalMessagesState extends State<PortalMessages> {
                   : RefreshIndicator(
                       color: const Color(0xFF0F766E),
                       onRefresh: _load,
-                      child: ListView(
-                        padding: const EdgeInsets.fromLTRB(16, 12, 16, 30),
-                        children: _messages!.isEmpty
-                            ? [
-                                Padding(
-                                  padding: const EdgeInsets.only(top: 80),
-                                  child: Center(
-                                    child: Column(
-                                      children: [
-                                        Icon(Icons.mark_chat_read_outlined,
-                                            size: 64, color: context.uiTextFaint),
-                                        const SizedBox(height: 12),
-                                        Text(
-                                          'Nenhuma mensagem recebida',
-                                          style: GoogleFonts.poppins(
-                                            fontSize: 16,
-                                            fontWeight: FontWeight.w600,
-                                            color: context.uiTextMuted,
-                                          ),
+                      child: NotificationListener<ScrollNotification>(
+                          key: _viewportKey,
+                          onNotification: (notification) {
+                            if (notification.depth == 0) {
+                              _scheduleVisibilityCheck();
+                            }
+                            return false;
+                          },
+                          child: ListView(
+                            padding: const EdgeInsets.fromLTRB(16, 12, 16, 30),
+                            children: _messages!.isEmpty
+                                ? [
+                                    Padding(
+                                      padding: const EdgeInsets.only(top: 80),
+                                      child: Center(
+                                        child: Column(
+                                          children: [
+                                            Icon(Icons.mark_chat_read_outlined,
+                                                size: 64,
+                                                color: context.uiTextFaint),
+                                            const SizedBox(height: 12),
+                                            Text(
+                                              'Nenhuma mensagem recebida',
+                                              style: GoogleFonts.poppins(
+                                                fontSize: 16,
+                                                fontWeight: FontWeight.w600,
+                                                color: context.uiTextMuted,
+                                              ),
+                                            ),
+                                            const SizedBox(height: 6),
+                                            Text(
+                                              'Perguntas e comunicados da gestão aparecerão aqui.',
+                                              textAlign: TextAlign.center,
+                                              style: TextStyle(
+                                                  color: context.uiTextMuted,
+                                                  fontSize: 13),
+                                            ),
+                                          ],
                                         ),
-                                        const SizedBox(height: 6),
-                                        Text(
-                                          'Perguntas e comunicados da gestão aparecerão aqui.',
-                                          textAlign: TextAlign.center,
-                                          style: TextStyle(
-                                              color: context.uiTextMuted,
-                                              fontSize: 13),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                )
-                              ]
-                            : _messages!
-                                .map((item) => _buildMessageCard(item))
-                                .toList(),
-                      ))),
+                                      ),
+                                    )
+                                  ]
+                                : _messages!
+                                    .map((item) => _buildMessageCard(item))
+                                    .toList(),
+                          )))),
     ]);
   }
 
   Widget _buildMessageCard(Map<String, dynamic> item) {
     final isRequest = item['type'] == 'request';
-    final isUnread = !widget.supervisor && item['readAt'] == null;
+    final isUnread = !widget.supervisor &&
+        item['readAt'] == null &&
+        !_confirmedRead.contains(item['id']);
+    final id = item['id'];
+    final messageKey = isUnread && id != null
+        ? _messageKeys.putIfAbsent(id, GlobalKey.new)
+        : null;
     final isAnswered = item['status'] == 'answered';
     final replies = (item['replies'] as List<dynamic>?) ?? [];
 
@@ -574,8 +668,8 @@ class _PortalMessagesState extends State<PortalMessages> {
                 if (isUnread) ...[
                   const SizedBox(width: 6),
                   Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 8, vertical: 3),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                     decoration: BoxDecoration(
                       color: const Color(0xFFFEE2E2),
                       borderRadius: BorderRadius.circular(6),
@@ -593,8 +687,8 @@ class _PortalMessagesState extends State<PortalMessages> {
                 if (isAnswered) ...[
                   const SizedBox(width: 6),
                   Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 8, vertical: 3),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                     decoration: BoxDecoration(
                       color: const Color(0xFFDCFCE7),
                       borderRadius: BorderRadius.circular(6),
@@ -618,20 +712,24 @@ class _PortalMessagesState extends State<PortalMessages> {
             ),
             const SizedBox(height: 10),
 
-            // Mensagem principal
-            Text(
-              item['message']?.toString() ?? '',
-              style: TextStyle(
-                fontSize: 14,
-                color: context.uiTextStrong,
-                height: 1.4,
-              ),
+            Column(
+              key: messageKey,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  item['message']?.toString() ?? '',
+                  style: TextStyle(
+                    fontSize: 14,
+                    color: context.uiTextStrong,
+                    height: 1.4,
+                  ),
+                ),
+                if (item['photoUrl'] != null) ...[
+                  const SizedBox(height: 10),
+                  PortalPhoto(url: item['photoUrl'].toString(), height: 160),
+                ],
+              ],
             ),
-
-            if (item['photoUrl'] != null) ...[
-              const SizedBox(height: 10),
-              PortalPhoto(url: item['photoUrl'].toString(), height: 160),
-            ],
 
             // Respostas / Diálogo
             if (replies.isNotEmpty) ...[
@@ -687,23 +785,6 @@ class _PortalMessagesState extends State<PortalMessages> {
             Row(
               mainAxisAlignment: MainAxisAlignment.end,
               children: [
-                if (isUnread)
-                  OutlinedButton.icon(
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: const Color(0xFF0F766E),
-                      side: const BorderSide(color: Color(0xFF99F6E4)),
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 12, vertical: 8),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                    ),
-                    onPressed: _markingReadId != null
-                        ? null
-                        : () => _markRead(item),
-                    icon: const Icon(Icons.done_all, size: 16),
-                    label: const Text('Lida', style: TextStyle(fontSize: 12)),
-                  ),
                 if (!widget.supervisor) ...[
                   const SizedBox(width: 8),
                   FilledButton.icon(
